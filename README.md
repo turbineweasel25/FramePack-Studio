@@ -2,7 +2,10 @@
     <img src="https://github.com/user-attachments/assets/2cc030b4-87e1-40a0-b5bf-1b7d6b62820b" width="300">
 </p>
 
-# FramePack
+# FramePack w/Timestamped Prompt
+
+Example timestamped prompt: [0s-2s: The person stands still, looking at the camera] [2s-4s: The person raises both arms gracefully above their head] [4s-6s: The person does a gentle spin with arms extended] [6s: The person bows elegantly with a smile]
+
 
 Official implementation and desktop software for ["Packing Input Frame Context in Next-Frame Prediction Models for Video Generation"](https://lllyasviel.github.io/frame_pack_gitpage/).
 
