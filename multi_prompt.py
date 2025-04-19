@@ -111,13 +111,9 @@ class PromptSection:
 
 def parse_timestamped_prompt(prompt_text, total_duration):
     """
-    Parse a prompt with timestamps in the format [0s-2s: text] or [3s: text]
-    Returns a list of PromptSection objects
+    Parse a prompt with timestamps and reverse them to account for reverse generation
     """
-    # Default prompt for the entire duration if no timestamps are found
-    if "[" not in prompt_text or "]" not in prompt_text:
-        return [PromptSection(prompt=prompt_text.strip())]
-    
+    # First parse normally
     sections = []
     # Find all timestamp sections [time: text]
     timestamp_pattern = r'\[(\d+(?:\.\d+)?s)(?:-(\d+(?:\.\d+)?s))?\s*:\s*(.*?)\]'
@@ -162,8 +158,21 @@ def parse_timestamped_prompt(prompt_text, total_duration):
     if sections and sections[-1].end_time is None:
         sections[-1].end_time = total_duration
     
-    return sections
-
+    # Now reverse the timestamps to account for reverse generation
+    reversed_sections = []
+    for section in sections:
+        reversed_start = total_duration - section.end_time if section.end_time is not None else 0
+        reversed_end = total_duration - section.start_time
+        reversed_sections.append(PromptSection(
+            prompt=section.prompt,
+            start_time=reversed_start,
+            end_time=reversed_end
+        ))
+    
+    # Sort the reversed sections by start time
+    reversed_sections.sort(key=lambda x: x.start_time)
+    
+    return reversed_sections
 
 @torch.no_grad()
 def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache):
