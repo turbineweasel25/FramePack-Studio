@@ -324,10 +324,11 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                 stream.output_queue.push(('end', None))
                 return
 
-            # Calculate current time position to determine which prompt to use
+           # Calculate current time position to determine which prompt to use
             current_time_position = (total_generated_latent_frames * 4 - 3) / 30  # in seconds
             if current_time_position < 0:
-                current_time_position = 0
+                current_time_position = 0.01
+
             
             # Find the appropriate prompt for this section
             current_prompt = prompt_sections[0].prompt  # Default to first prompt
