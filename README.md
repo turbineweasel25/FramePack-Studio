@@ -12,6 +12,16 @@ To run:
 
     python multi_prompt.py
 
+### Example Output
+
+This is still very rough. Testing as quickly as I can on my little 12gb 4070. It does seem to be following all of the prompts although the output still leaves a lot to be desired.
+
+[Output (w/Teacache)](https://vimeo.com/1076967237)
+
+Prompt:
+
+    [1s: The person waves hello] [2s: The person jumps up and down] [4s: The person does a spin]
+
 ### Example timestamped prompt: 
     [0s-2s: The person stands still, looking at the camera] [2s-4s: The person raises both arms gracefully above their head] [4s-6s: The person does a gentle spin with arms extended] [6s: The person bows elegantly with a smile]
 
