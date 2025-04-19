@@ -6,10 +6,12 @@
 
 Still in the very very early stages of testing this but so far it seems to be alright. I don't think it will be able to break out of the limitations present when things stray too far from the original image but it can at least get some distinct actions in a distinct order.
 
-### Example timestamped prompts: 
-[0s-2s: The person stands still, looking at the camera] [2s-4s: The person raises both arms gracefully above their head] [4s-6s: The person does a gentle spin with arms extended] [6s: The person bows elegantly with a smile]
+To run:
 
-[0s-1s: The person looks surprised with wide eyes and open mouth] [1s-2.5s: The person laughs heartily with head tilted back] [2.5s-4s: The person pretends to cry dramatically with hands covering face] [4s-5s: The person shows excitement by jumping slightly with fists clenched] [5s: The person gives a thumbs up with a confident smile]
+    python multi_prompt.py
+
+### Example timestamped prompt: 
+    [0s-2s: The person stands still, looking at the camera] [2s-4s: The person raises both arms gracefully above their head] [4s-6s: The person does a gentle spin with arms extended] [6s: The person bows elegantly with a smile]
 
 
 
