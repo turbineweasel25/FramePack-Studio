@@ -109,11 +109,43 @@ class PromptSection:
         self.end_time = end_time  # in seconds, None means until the end
 
 
-def parse_timestamped_prompt(prompt_text, total_duration):
+def snap_to_section_boundaries(prompt_sections, latent_window_size, fps=30):
+    """Adjust timestamps to align with model's internal section boundaries"""
+    section_duration = (latent_window_size * 4 - 3) / fps  # Duration of one section in seconds
+    
+    aligned_sections = []
+    for section in prompt_sections:
+        # Snap start time to nearest section boundary
+        aligned_start = round(section.start_time / section_duration) * section_duration
+        
+        # Snap end time to nearest section boundary
+        aligned_end = None
+        if section.end_time is not None:
+            aligned_end = round(section.end_time / section_duration) * section_duration
+        
+        # Ensure minimum section length
+        if aligned_end is not None and aligned_end <= aligned_start:
+            aligned_end = aligned_start + section_duration
+            
+        aligned_sections.append(PromptSection(
+            prompt=section.prompt,
+            start_time=aligned_start,
+            end_time=aligned_end
+        ))
+    
+    return aligned_sections
+
+
+def parse_timestamped_prompt(prompt_text, total_duration, latent_window_size=9):
     """
-    Parse a prompt with timestamps and reverse them to account for reverse generation
+    Parse a prompt with timestamps in the format [0s-2s: text] or [3s: text]
+    Returns a list of PromptSection objects with timestamps aligned to section boundaries
+    and reversed to account for reverse generation
     """
-    # First parse normally
+    # Default prompt for the entire duration if no timestamps are found
+    if "[" not in prompt_text or "]" not in prompt_text:
+        return [PromptSection(prompt=prompt_text.strip())]
+    
     sections = []
     # Find all timestamp sections [time: text]
     timestamp_pattern = r'\[(\d+(?:\.\d+)?s)(?:-(\d+(?:\.\d+)?s))?\s*:\s*(.*?)\]'
@@ -158,6 +190,9 @@ def parse_timestamped_prompt(prompt_text, total_duration):
     if sections and sections[-1].end_time is None:
         sections[-1].end_time = total_duration
     
+    # Snap timestamps to section boundaries
+    sections = snap_to_section_boundaries(sections, latent_window_size)
+    
     # Now reverse the timestamps to account for reverse generation
     reversed_sections = []
     for section in sections:
@@ -174,13 +209,14 @@ def parse_timestamped_prompt(prompt_text, total_duration):
     
     return reversed_sections
 
+
 @torch.no_grad()
 def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache):
     total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
     total_latent_sections = int(max(round(total_latent_sections), 1))
 
-    # Parse the timestamped prompt
-    prompt_sections = parse_timestamped_prompt(prompt_text, total_second_length)
+    # Parse the timestamped prompt with boundary snapping and reversing
+    prompt_sections = parse_timestamped_prompt(prompt_text, total_second_length, latent_window_size)
     
     job_id = generate_timestamp()
 
@@ -289,8 +325,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                 return
 
             # Calculate current time position to determine which prompt to use
-            # Note: The generation is done in reverse, so we need to calculate the time differently
-            current_time_position = total_second_length - ((total_generated_latent_frames * 4 - 3) / 30)  # in seconds
+            current_time_position = (total_generated_latent_frames * 4 - 3) / 30  # in seconds
             if current_time_position < 0:
                 current_time_position = 0
             
@@ -304,7 +339,14 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             # Get the encoded prompt for this section
             llama_vec, llama_attention_mask, clip_l_pooler = encoded_prompts[current_prompt]
 
-            print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}, time position: {current_time_position:.2f}s, using prompt: {current_prompt[:30]}...')
+            # Calculate the original (non-reversed) time position for display
+            original_time_position = total_second_length - current_time_position
+            if original_time_position < 0:
+                original_time_position = 0
+                
+            print(f'latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}, ' 
+                  f'time position: {current_time_position:.2f}s (original: {original_time_position:.2f}s), '
+                  f'using prompt: {current_prompt[:30]}...')
 
             indices = torch.arange(0, sum([1, latent_padding_size, latent_window_size, 1, 2, 16])).unsqueeze(0)
             clean_latent_indices_pre, blank_indices, latent_indices, clean_latent_indices_post, clean_latent_2x_indices, clean_latent_4x_indices = indices.split([1, latent_padding_size, latent_window_size, 1, 2, 16], dim=1)
@@ -336,8 +378,19 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
 
                 current_step = d['i'] + 1
                 percentage = int(100.0 * current_step / steps)
+                
+                # Calculate current time position and original (non-reversed) position
+                current_pos = (total_generated_latent_frames * 4 - 3) / 30
+                original_pos = total_second_length - current_pos
+                if current_pos < 0: current_pos = 0
+                if original_pos < 0: original_pos = 0
+                
                 hint = f'Sampling {current_step}/{steps}'
-                desc = f'Total generated frames: {int(max(0, total_generated_latent_frames * 4 - 3))}, Video length: {max(0, (total_generated_latent_frames * 4 - 3) / 30) :.2f} seconds (FPS-30). The video is being extended now ...'
+                desc = f'Total generated frames: {int(max(0, total_generated_latent_frames * 4 - 3))}, ' \
+                       f'Video length: {max(0, (total_generated_latent_frames * 4 - 3) / 30):.2f} seconds (FPS-30). ' \
+                       f'Current position: {current_pos:.2f}s (original: {original_pos:.2f}s). ' \
+                       f'Using prompt: "{current_prompt[:50]}..."'
+                
                 stream.output_queue.push(('progress', (preview, desc, make_progress_bar_html(percentage, hint))))
                 return
 
@@ -450,11 +503,17 @@ def end_process():
     stream.input_queue.push('end')
 
 
+# Calculate section boundaries for UI display
+section_duration = (9 * 4 - 3) / 30  # Using default latent_window_size=9
+section_boundaries = ", ".join([f"{i*section_duration:.1f}s" for i in range(10)])  # Show first 10 boundaries
+
 quick_prompts = [
     'The girl dances gracefully, with clear movements, full of charm.',
     'A character doing some simple body movements.',
     '[0s-2s: The person waves hello] [2s-4s: The person jumps up and down] [4s: The person does a spin]',
-    '[0s-2.5s: The person raises both arms slowly] [2.5s: The person claps hands enthusiastically]'
+    '[0s-2.5s: The person raises both arms slowly] [2.5s: The person claps hands enthusiastically]',
+    '[0s-1.1s: Person gives thumbs up] [1.1s-2.2s: Person smiles and winks] [2.2s-3.3s: Person shows two thumbs down]',
+    '[0s-1.1s: Person looks surprised] [1.1s-2.2s: Person raises arms above head] [2.2s-3.3s: Person puts hands on hips]'
 ]
 quick_prompts = [[x] for x in quick_prompts]
 
@@ -467,11 +526,16 @@ with block:
         with gr.Column():
             input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
             
-            gr.Markdown("""
+            gr.Markdown(f"""
             ### Prompt with Timestamps
             You can use timestamps in your prompt to change the action at specific times:
             - Format: `[0s-2s: person waves]` or `[3s: person jumps]`
-            - Example: `[0s-2s: The person waves hello] [2s-4s: The person jumps] Regular text applies to the entire video`
+            - Example: `[0s-2s: The person waves hello] [2s-4s: The person jumps]`
+            
+            For best results, align your timestamps with these section boundaries:
+            {section_boundaries}...
+            
+            Write prompts in natural order (beginning to end). The system will automatically handle the reverse generation.
             """)
             
             prompt = gr.Textbox(label="Prompt", value='The girl dances gracefully, with clear movements, full of charm.')
@@ -506,13 +570,13 @@ with block:
             progress_bar = gr.HTML('', elem_classes='no-generating-animation')
             
             gr.Markdown("""
-            ## How to Use Timestamped Prompts
+            ## Tips for Best Results
             
-            1. Use the format `[start-end: prompt]` to specify actions at specific times
-               - Example: `[0s-2s: person waves]`
-            2. You can use just a start time: `[3s: person jumps]` (will apply until the next timestamp)
-            3. Any text outside of timestamps applies to the entire video
-            4. Remember that generation happens in reverse, so the ending of the video is generated first
+            1. Keep prompt sections short and clear (10-15 words per section)
+            2. Align timestamps with section boundaries for more precise control
+            3. Allow at least 1.1 seconds per action for best results
+            4. Use simple, descriptive language focusing on visible actions
+            5. For complex sequences, use fewer sections with longer durations
             """)
     
     # Connect the main process
