@@ -6,6 +6,8 @@
 
 Still in the very very early stages of testing this but so far it seems to be alright. I don't think it will be able to break out of the limitations present when things stray too far from the original image but it can at least get some distinct actions in a distinct order.
 
+The script 'snaps' each timestamp to the nearest section of frames in order to avoid trying to change the prompt mid-section which doesn't seem to work great. So the timestamps won't always be exaclty correct but you can also define them at the section breaks (1.1 seconds, 2.2 seconds etc) in order to get stricter adherence. 
+
 After a bit of testing it's clearly quite hit or miss but I have some ideas for improvements.  Will post examples here once I have good ones. Likely tomorrow.
 
 To run:
