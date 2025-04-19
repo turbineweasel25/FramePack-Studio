@@ -6,6 +6,8 @@
 
 Still in the very very early stages of testing this but so far it seems to be alright. I don't think it will be able to break out of the limitations present when things stray too far from the original image but it can at least get some distinct actions in a distinct order.
 
+After a bit of testing it's clearly quite hit or miss but I have some ideas for improvements.  Will post examples here once I have good ones. Likely tomorrow.
+
 To run:
 
     python multi_prompt.py
