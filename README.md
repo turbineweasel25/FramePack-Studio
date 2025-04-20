@@ -14,7 +14,6 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
 
 - Python 3.8+
 - CUDA-compatible GPU with at least 8GB VRAM (16GB+ recommended)
-- [Git LFS](https://git-lfs.github.com/) installed
 
 ### Setup
 
