@@ -152,9 +152,9 @@ def get_quick_prompts() -> List[List[str]]:
         List of example prompts formatted for Gradio Dataset
     """
     prompts = [
-        '[0s-2s: The person waves hello] [2s-4s: The person jumps up and down] [4s: The person does a spin]',
-        '[0s-2.5s: The person raises both arms slowly] [2.5s: The person claps hands enthusiastically]',
-        '[0s-1.1s: Person gives thumbs up] [1.1s-2.2s: Person smiles and winks] [2.2s-3.3s: Person shows two thumbs down]',
-        '[0s-1.1s: Person looks surprised] [1.1s-2.2s: Person raises arms above head] [2.2s-3.3s: Person puts hands on hips]'
+        '[0s: The person waves hello] [2s: The person jumps up and down] [4s: The person does a spin]',
+        '[0s: The person raises both arms slowly] [2s: The person claps hands enthusiastically]',
+        '[0s: Person gives thumbs up] [1.1s: Person smiles and winks] [2.2s: Person shows two thumbs down]',
+        '[0s: Person looks surprised] [1.1s: Person raises arms above head] [2.2s: Person puts hands on hips]'
     ]
     return [[x] for x in prompts]

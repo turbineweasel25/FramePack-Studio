@@ -1,5 +1,6 @@
 import gradio as gr
 import time
+import datetime
 from typing import List, Dict, Any, Optional
 
 from modules.video_queue import JobStatus
@@ -42,19 +43,7 @@ def create_interface(
             with gr.TabItem("Generate"):
                 with gr.Row():
                     with gr.Column():
-                        input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
-                        
-                        gr.Markdown(f"""
-                        ### Prompt with Timestamps
-                        You can use timestamps in your prompt to change the action at specific times:
-                        - Format: `[0s-2s: person waves]` or `[3s: person jumps]`
-                        - Example: `[0s-2s: The person waves hello] [2s-4s: The person jumps]`
-                        
-                        For best results, align your timestamps with these section boundaries:
-                        {section_boundaries}...
-                        
-                        Write prompts in natural order (beginning to end). The system will automatically handle the reverse generation.
-                        """)
+                        input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)   
                         
                         prompt = gr.Textbox(label="Prompt", value=default_prompt)
                         example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
@@ -91,7 +80,7 @@ def create_interface(
             
             with gr.TabItem("Queue Status"):
                 queue_status = gr.DataFrame(
-                    headers=["Job ID", "Status", "Created", "Started", "Completed", "Queue Position"],
+                    headers=["Job ID", "Status", "Created", "Started", "Completed", "Elapsed", "Queue Position"],
                     datatype=["str", "str", "str", "str", "str", "str"],
                     label="Job Queue"
                 )
