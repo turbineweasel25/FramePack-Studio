@@ -1,6 +1,6 @@
 # FramePack Studio
 
-FramePack Studio is an enhanced version of the HunyuanVideo FramePack model, designed to create intricate video scenes with improved prompt adherence and advanced generation capabilities. This tool extends the original FramePack functionality with timestamped prompts, better quality control, and a user-friendly interface.
+FramePack Studio is an enhanced version of the FramePack demo script, designed to create intricate video scenes with improved prompt adherence and advanced generation capabilities. Framepack Studio extends the original FramePack functionality with timestamped prompts, better quality control, and a user-friendly interface.
 
 ## Current Features
 
