@@ -3,6 +3,13 @@ from diffusers_helper.hf_login import login
 import os
 import json
 import re
+import time
+import threading
+import uuid
+import queue
+from dataclasses import dataclass
+from enum import Enum
+from typing import Dict, Any, Optional, List
 
 os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
@@ -28,6 +35,9 @@ from diffusers_helper.gradio.progress_bar import make_progress_bar_css, make_pro
 from transformers import SiglipImageProcessor, SiglipVisionModel
 from diffusers_helper.clip_vision import hf_clip_vision_encode
 from diffusers_helper.bucket_tools import find_nearest_bucket
+
+# Import the queue handling code
+from video_queue import VideoJobQueue, JobStatus
 
 
 parser = argparse.ArgumentParser()
@@ -99,6 +109,9 @@ stream = AsyncStream()
 
 outputs_folder = './outputs/'
 os.makedirs(outputs_folder, exist_ok=True)
+
+# Create job queue
+job_queue = VideoJobQueue()
 
 
 # Add this new data structure to store section-specific prompts
@@ -211,7 +224,10 @@ def parse_timestamped_prompt(prompt_text, total_duration, latent_window_size=9):
 
 
 @torch.no_grad()
-def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache):
+def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, job_stream=None):
+    # Use the provided job_stream or the global stream
+    stream_to_use = job_stream if job_stream is not None else stream
+    
     total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
     total_latent_sections = int(max(round(total_latent_sections), 1))
 
@@ -220,7 +236,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
     
     job_id = generate_timestamp()
 
-    stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Starting ...'))))
+    stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Starting ...'))))
 
     try:
         # Clean GPU
@@ -230,7 +246,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             )
 
         # Pre-encode all prompts
-        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Text encoding all prompts...'))))
+        stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Text encoding all prompts...'))))
         
         if not high_vram:
             fake_diffusers_current_device(text_encoder, gpu)
@@ -260,7 +276,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             llama_vec_n, llama_attention_mask_n = crop_or_pad_yield_mask(llama_vec_n, length=512)
 
         # Processing input image
-        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Image processing ...'))))
+        stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Image processing ...'))))
 
         H, W, C = input_image.shape
         height, width = find_nearest_bucket(H, W, resolution=640)
@@ -272,7 +288,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
         input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
 
         # VAE encoding
-        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'VAE encoding ...'))))
+        stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'VAE encoding ...'))))
 
         if not high_vram:
             load_model_as_complete(vae, target_device=gpu)
@@ -280,7 +296,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
         start_latent = vae_encode(input_image_pt, vae)
 
         # CLIP Vision
-        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'CLIP Vision encoding ...'))))
+        stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'CLIP Vision encoding ...'))))
 
         if not high_vram:
             load_model_as_complete(image_encoder, target_device=gpu)
@@ -300,7 +316,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
         image_encoder_last_hidden_state = image_encoder_last_hidden_state.to(transformer.dtype)
 
         # Sampling
-        stream.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Start sampling ...'))))
+        stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Start sampling ...'))))
 
         rnd = torch.Generator("cpu").manual_seed(seed)
         num_frames = latent_window_size * 4 - 3
@@ -320,8 +336,8 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             is_last_section = latent_padding == 0
             latent_padding_size = latent_padding * latent_window_size
 
-            if stream.input_queue.top() == 'end':
-                stream.output_queue.push(('end', None))
+            if stream_to_use.input_queue.top() == 'end':
+                stream_to_use.output_queue.push(('end', None))
                 return
 
            # Calculate current time position to determine which prompt to use
@@ -373,8 +389,8 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                 preview = (preview * 255.0).detach().cpu().numpy().clip(0, 255).astype(np.uint8)
                 preview = einops.rearrange(preview, 'b c t h w -> (b h) (t w) c')
 
-                if stream.input_queue.top() == 'end':
-                    stream.output_queue.push(('end', None))
+                if stream_to_use.input_queue.top() == 'end':
+                    stream_to_use.output_queue.push(('end', None))
                     raise KeyboardInterrupt('User ends the task.')
 
                 current_step = d['i'] + 1
@@ -392,7 +408,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                        f'Current position: {current_pos:.2f}s (original: {original_pos:.2f}s). ' \
                        f'Using prompt: "{current_prompt[:50]}..."'
                 
-                stream.output_queue.push(('progress', (preview, desc, make_progress_bar_html(percentage, hint))))
+                stream_to_use.output_queue.push(('progress', (preview, desc, make_progress_bar_html(percentage, hint))))
                 return
 
             generated_latents = sample_hunyuan(
@@ -456,7 +472,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
 
             print(f'Decoded. Current latent shape {real_history_latents.shape}; pixel shape {history_pixels.shape}')
 
-            stream.output_queue.push(('file', output_filename))
+            stream_to_use.output_queue.push(('file', output_filename))
 
             if is_last_section:
                 break
@@ -468,40 +484,110 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                 text_encoder, text_encoder_2, image_encoder, vae, transformer
             )
 
-    stream.output_queue.push(('end', None))
+    stream_to_use.output_queue.push(('end', None))
     return
 
 
 def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache):
-    global stream
     assert input_image is not None, 'No input image!'
 
-    yield None, None, '', '', gr.update(interactive=False), gr.update(interactive=True)
+    # Create job parameters
+    job_params = {
+        'input_image': input_image.copy(),  # Make a copy to avoid reference issues
+        'prompt_text': prompt_text,
+        'n_prompt': n_prompt,
+        'seed': seed,
+        'total_second_length': total_second_length,
+        'latent_window_size': latent_window_size,
+        'steps': steps,
+        'cfg': cfg,
+        'gs': gs,
+        'rs': rs,
+        'gpu_memory_preservation': gpu_memory_preservation,
+        'use_teacache': use_teacache
+    }
+    
+    # Add job to queue
+    job_id = job_queue.add_job(job_params)
+    print(f"Added job {job_id} to queue")
+    
+    # Return immediately after adding to queue
+    return None, job_id, None, '', f'Job added to queue. Job ID: {job_id}', gr.update(interactive=True), gr.update(interactive=True)
 
-    stream = AsyncStream()
-
-    async_run(worker, input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache)
-
-    output_filename = None
-
-    while True:
-        flag, data = stream.output_queue.next()
-
-        if flag == 'file':
-            output_filename = data
-            yield output_filename, gr.update(), gr.update(), gr.update(), gr.update(interactive=False), gr.update(interactive=True)
-
-        if flag == 'progress':
-            preview, desc, html = data
-            yield gr.update(), gr.update(visible=True, value=preview), desc, html, gr.update(interactive=False), gr.update(interactive=True)
-
-        if flag == 'end':
-            yield output_filename, gr.update(visible=False), gr.update(), '', gr.update(interactive=True), gr.update(interactive=False)
-            break
 
 
 def end_process():
-    stream.input_queue.push('end')
+    # Only cancel the current running job
+    with job_queue.lock:
+        if job_queue.current_job:
+            job_id = job_queue.current_job.id
+            print(f"Cancelling job {job_id}")
+            job_queue.cancel_job(job_id)
+
+
+def update_queue_status():
+    jobs = job_queue.get_all_jobs()
+    rows = []
+    for job in jobs:
+        created = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(job.created_at)) if job.created_at else ""
+        started = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(job.started_at)) if job.started_at else ""
+        completed = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(job.completed_at)) if job.completed_at else ""
+        position = job_queue.get_queue_position(job.id) if job.status == JobStatus.PENDING else ""
+        
+        rows.append([
+            job.id,
+            job.status.value,
+            created,
+            started,
+            completed,
+            str(position) if position is not None else ""
+        ])
+    return rows
+
+def monitor_job(job_id):
+    if not job_id:
+        return None, None, '', 'No job ID provided', gr.update(interactive=True), gr.update(interactive=True)
+    
+    job = job_queue.get_job(job_id)
+    
+    if not job:
+        return None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
+    
+    # Poll for job status and updates
+    while True:
+        job = job_queue.get_job(job_id)
+        
+        if not job:
+            return None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
+        
+        if job.status == JobStatus.PENDING:
+            position = job_queue.get_queue_position(job_id)
+            yield None, job_id, None, '', f'Waiting in queue. Position: {position}', gr.update(interactive=True), gr.update(interactive=True)
+        
+        elif job.status == JobStatus.RUNNING:
+            if job.progress_data:
+                preview = job.progress_data.get('preview')
+                desc = job.progress_data.get('desc', '')
+                html = job.progress_data.get('html', '')
+                yield gr.update(), job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), gr.update(interactive=True)
+            else:
+                yield None, job_id, None, '', 'Processing...', gr.update(interactive=True), gr.update(interactive=True)
+        
+        elif job.status == JobStatus.COMPLETED:
+            yield job.result, job_id, gr.update(visible=False), gr.update(), '', gr.update(interactive=True), gr.update(interactive=True)
+            break
+        
+        elif job.status == JobStatus.FAILED:
+            yield None, job_id, gr.update(visible=False), gr.update(), f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True)
+            break
+        
+        elif job.status == JobStatus.CANCELLED:
+            yield None, job_id, gr.update(visible=False), gr.update(), 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True)
+            break
+        
+        # Wait a bit before checking again
+        time.sleep(0.5)
+
 
 
 # Calculate section boundaries for UI display
@@ -521,58 +607,76 @@ css = make_progress_bar_css()
 block = gr.Blocks(css=css).queue()
 with block:
     gr.Markdown('# FramePack with Timestamped Prompts')
-    with gr.Row():
-        with gr.Column():
-            input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
-            
-            gr.Markdown(f"""
-            ### Prompt with Timestamps
-            You can use timestamps in your prompt to change the action at specific times:
-            - Format: `[0s-2s: person waves]` or `[3s: person jumps]`
-            - Example: `[0s-2s: The person waves hello] [2s-4s: The person jumps]`
-            
-            For best results, align your timestamps with these section boundaries:
-            {section_boundaries}...
-            
-            Write prompts in natural order (beginning to end). The system will automatically handle the reverse generation.
-            """)
-            
-            prompt = gr.Textbox(label="Prompt", value='The girl dances gracefully, with clear movements, full of charm.')
-            example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
-            example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
-
+    
+    with gr.Tabs():
+        with gr.TabItem("Generate"):
             with gr.Row():
-                start_button = gr.Button(value="Start Generation")
-                end_button = gr.Button(value="End Generation", interactive=False)
+                with gr.Column():
+                    input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)
+                    
+                    gr.Markdown(f"""
+                    ### Prompt with Timestamps
+                    You can use timestamps in your prompt to change the action at specific times:
+                    - Format: `[0s-2s: person waves]` or `[3s: person jumps]`
+                    - Example: `[0s-2s: The person waves hello] [2s-4s: The person jumps]`
+                    
+                    For best results, align your timestamps with these section boundaries:
+                    {section_boundaries}...
+                    
+                    Write prompts in natural order (beginning to end). The system will automatically handle the reverse generation.
+                    """)
+                    
+                    prompt = gr.Textbox(label="Prompt", value='The girl dances gracefully, with clear movements, full of charm.')
+                    example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
+                    example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
 
-            with gr.Group():
-                use_teacache = gr.Checkbox(label='Use TeaCache', value=True, info='Faster speed, but often makes hands and fingers slightly worse.')
+                    with gr.Row():
+                        start_button = gr.Button(value="Add to Queue")
+                        monitor_button = gr.Button(value="Monitor Selected Job")
+                        end_button = gr.Button(value="Cancel Current Job", interactive=True)
 
-                n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
-                seed = gr.Number(label="Seed", value=31337, precision=0)
+                    with gr.Group():
+                        use_teacache = gr.Checkbox(label='Use TeaCache', value=True, info='Faster speed, but often makes hands and fingers slightly worse.')
 
-                total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
-                latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=False)  # Should not change
-                steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1, info='Changing this value is not recommended.')
+                        n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
+                        seed = gr.Number(label="Seed", value=31337, precision=0)
 
-                cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=1.0, step=0.01, visible=False)  # Should not change
-                gs = gr.Slider(label="Distilled CFG Scale", minimum=1.0, maximum=32.0, value=10.0, step=0.01, info='Changing this value is not recommended.')
-                rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
+                        total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
+                        latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=False)  # Should not change
+                        steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1, info='Changing this value is not recommended.')
 
-                gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
+                        cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=1.0, step=0.01, visible=False)  # Should not change
+                        gs = gr.Slider(label="Distilled CFG Scale", minimum=1.0, maximum=32.0, value=10.0, step=0.01, info='Changing this value is not recommended.')
+                        rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
 
-        with gr.Column():
-            preview_image = gr.Image(label="Next Latents", height=200, visible=False)
-            result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
-            gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
-            progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
-            progress_bar = gr.HTML('', elem_classes='no-generating-animation')
-            
+                        gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
+
+                with gr.Column():
+                    current_job_id = gr.Textbox(label="Current Job ID", visible=True, interactive=True)
+                    preview_image = gr.Image(label="Next Latents", height=200, visible=False)
+                    result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
+                    gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
+                    progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
+                    progress_bar = gr.HTML('', elem_classes='no-generating-animation')
+        
+        with gr.TabItem("Queue Status"):
+            queue_status = gr.DataFrame(
+                headers=["Job ID", "Status", "Created", "Started", "Completed", "Queue Position"],
+                datatype=["str", "str", "str", "str", "str", "str"],
+                label="Job Queue"
+            )
+            refresh_button = gr.Button("Refresh Queue Status")
+            refresh_button.click(update_queue_status, outputs=[queue_status])
     
     # Connect the main process
     ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache]
-    start_button.click(fn=process, inputs=ips, outputs=[result_video, preview_image, progress_desc, progress_bar, start_button, end_button])
+    start_button.click(fn=process, inputs=ips, outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button])
+    
+    # Add monitor functionality
+    monitor_button.click(fn=monitor_job, inputs=[current_job_id], outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button])
+    
     end_button.click(fn=end_process)
+
 
 
 block.launch(
