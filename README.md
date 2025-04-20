@@ -57,7 +57,7 @@ You can create videos with changing prompts over time using the following syntax
 [10s] The deer drinks from a small stream
 ```
 
-Each timestamp defines when that prompt should start influencing the generation. The system will smoothly transition between prompts for a cohesive video.
+Each timestamp defines when that prompt should start influencing the generation. The system will (hopefully) smoothly transition between prompts for a cohesive video.
 
 ## Credits
 Many thanks to [Lvmin Zhang](https://github.com/lllyasviel) for the absolutely amazing work on the original [FramePack](https://github.com/lllyasviel/FramePack) code!
