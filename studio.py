@@ -1,36 +1,25 @@
 from diffusers_helper.hf_login import login
 
 import os
-import json
-import re
 import time
-import threading
-import uuid
-import queue
-from dataclasses import dataclass
-from enum import Enum
-from typing import Dict, Any, Optional, List
+import argparse
+import traceback
+import einops
+import numpy as np
+import torch
 
 os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
 import gradio as gr
-import torch
-import traceback
-import einops
-import safetensors.torch as sf
-import numpy as np
-import argparse
-import math
-
 from PIL import Image
 from diffusers import AutoencoderKLHunyuanVideo
 from transformers import LlamaModel, CLIPTextModel, LlamaTokenizerFast, CLIPTokenizer
 from diffusers_helper.hunyuan import encode_prompt_conds, vae_decode, vae_encode, vae_decode_fake
-from diffusers_helper.utils import save_bcthw_as_mp4, crop_or_pad_yield_mask, soft_append_bcthw, resize_and_center_crop, state_dict_weighted_merge, state_dict_offset_merge, generate_timestamp
+from diffusers_helper.utils import save_bcthw_as_mp4, crop_or_pad_yield_mask, soft_append_bcthw, resize_and_center_crop, generate_timestamp
 from diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModelPacked
 from diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
 from diffusers_helper.memory import cpu, gpu, get_cuda_free_memory_gb, move_model_to_device_with_memory_preservation, offload_model_from_device_for_memory_preservation, fake_diffusers_current_device, DynamicSwapInstaller, unload_complete_models, load_model_as_complete
-from diffusers_helper.thread_utils import AsyncStream, async_run
+from diffusers_helper.thread_utils import AsyncStream
 from diffusers_helper.gradio.progress_bar import make_progress_bar_css, make_progress_bar_html
 from transformers import SiglipImageProcessor, SiglipVisionModel
 from diffusers_helper.clip_vision import hf_clip_vision_encode
@@ -38,6 +27,9 @@ from diffusers_helper.bucket_tools import find_nearest_bucket
 
 # Import the queue handling code
 from video_queue import VideoJobQueue, JobStatus
+
+# Import the prompt handling code
+from prompt_handler import parse_timestamped_prompt, get_section_boundaries, get_quick_prompts
 
 
 parser = argparse.ArgumentParser()
@@ -112,115 +104,6 @@ os.makedirs(outputs_folder, exist_ok=True)
 
 # Create job queue
 job_queue = VideoJobQueue()
-
-
-# Add this new data structure to store section-specific prompts
-class PromptSection:
-    def __init__(self, prompt, start_time=0, end_time=None):
-        self.prompt = prompt
-        self.start_time = start_time  # in seconds
-        self.end_time = end_time  # in seconds, None means until the end
-
-
-def snap_to_section_boundaries(prompt_sections, latent_window_size, fps=30):
-    """Adjust timestamps to align with model's internal section boundaries"""
-    section_duration = (latent_window_size * 4 - 3) / fps  # Duration of one section in seconds
-    
-    aligned_sections = []
-    for section in prompt_sections:
-        # Snap start time to nearest section boundary
-        aligned_start = round(section.start_time / section_duration) * section_duration
-        
-        # Snap end time to nearest section boundary
-        aligned_end = None
-        if section.end_time is not None:
-            aligned_end = round(section.end_time / section_duration) * section_duration
-        
-        # Ensure minimum section length
-        if aligned_end is not None and aligned_end <= aligned_start:
-            aligned_end = aligned_start + section_duration
-            
-        aligned_sections.append(PromptSection(
-            prompt=section.prompt,
-            start_time=aligned_start,
-            end_time=aligned_end
-        ))
-    
-    return aligned_sections
-
-
-def parse_timestamped_prompt(prompt_text, total_duration, latent_window_size=9):
-    """
-    Parse a prompt with timestamps in the format [0s-2s: text] or [3s: text]
-    Returns a list of PromptSection objects with timestamps aligned to section boundaries
-    and reversed to account for reverse generation
-    """
-    # Default prompt for the entire duration if no timestamps are found
-    if "[" not in prompt_text or "]" not in prompt_text:
-        return [PromptSection(prompt=prompt_text.strip())]
-    
-    sections = []
-    # Find all timestamp sections [time: text]
-    timestamp_pattern = r'\[(\d+(?:\.\d+)?s)(?:-(\d+(?:\.\d+)?s))?\s*:\s*(.*?)\]'
-    regular_text = prompt_text
-    
-    for match in re.finditer(timestamp_pattern, prompt_text):
-        start_time_str = match.group(1)
-        end_time_str = match.group(2)
-        section_text = match.group(3).strip()
-        
-        # Convert time strings to seconds
-        start_time = float(start_time_str.rstrip('s'))
-        end_time = float(end_time_str.rstrip('s')) if end_time_str else None
-        
-        sections.append(PromptSection(
-            prompt=section_text,
-            start_time=start_time,
-            end_time=end_time
-        ))
-        
-        # Remove the processed section from regular_text
-        regular_text = regular_text.replace(match.group(0), "")
-    
-    # If there's any text outside of timestamp sections, use it as a default for the entire duration
-    regular_text = regular_text.strip()
-    if regular_text:
-        sections.append(PromptSection(
-            prompt=regular_text,
-            start_time=0,
-            end_time=None
-        ))
-    
-    # Sort sections by start time
-    sections.sort(key=lambda x: x.start_time)
-    
-    # Fill in end times if not specified
-    for i in range(len(sections) - 1):
-        if sections[i].end_time is None:
-            sections[i].end_time = sections[i+1].start_time
-    
-    # Set the last section's end time to the total duration if not specified
-    if sections and sections[-1].end_time is None:
-        sections[-1].end_time = total_duration
-    
-    # Snap timestamps to section boundaries
-    sections = snap_to_section_boundaries(sections, latent_window_size)
-    
-    # Now reverse the timestamps to account for reverse generation
-    reversed_sections = []
-    for section in sections:
-        reversed_start = total_duration - section.end_time if section.end_time is not None else 0
-        reversed_end = total_duration - section.start_time
-        reversed_sections.append(PromptSection(
-            prompt=section.prompt,
-            start_time=reversed_start,
-            end_time=reversed_end
-        ))
-    
-    # Sort the reversed sections by start time
-    reversed_sections.sort(key=lambda x: x.start_time)
-    
-    return reversed_sections
 
 
 @torch.no_grad()
@@ -515,7 +398,6 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
     return None, job_id, None, '', f'Job added to queue. Job ID: {job_id}', gr.update(interactive=True), gr.update(interactive=True)
 
 
-
 def end_process():
     # Only cancel the current running job
     with job_queue.lock:
@@ -588,19 +470,12 @@ def monitor_job(job_id):
         # Wait a bit before checking again
         time.sleep(0.5)
 
+#Set worker
+job_queue.set_worker_function(worker)
 
-
-# Calculate section boundaries for UI display
-section_duration = (9 * 4 - 3) / 30  # Using default latent_window_size=9
-section_boundaries = ", ".join([f"{i*section_duration:.1f}s" for i in range(10)])  # Show first 10 boundaries
-
-quick_prompts = [
-    '[0s-2s: The person waves hello] [2s-4s: The person jumps up and down] [4s: The person does a spin]',
-    '[0s-2.5s: The person raises both arms slowly] [2.5s: The person claps hands enthusiastically]',
-    '[0s-1.1s: Person gives thumbs up] [1.1s-2.2s: Person smiles and winks] [2.2s-3.3s: Person shows two thumbs down]',
-    '[0s-1.1s: Person looks surprised] [1.1s-2.2s: Person raises arms above head] [2.2s-3.3s: Person puts hands on hips]'
-]
-quick_prompts = [[x] for x in quick_prompts]
+# Get section boundaries and quick prompts from the prompt handler
+section_boundaries = get_section_boundaries()
+quick_prompts = get_quick_prompts()
 
 
 css = make_progress_bar_css()
@@ -676,7 +551,6 @@ with block:
     monitor_button.click(fn=monitor_job, inputs=[current_job_id], outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button])
     
     end_button.click(fn=end_process)
-
 
 
 block.launch(

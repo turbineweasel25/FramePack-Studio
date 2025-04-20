@@ -1,12 +1,34 @@
-import queue
 import threading
 import time
 import uuid
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, Any, Optional
+import queue as queue_module  # Renamed to avoid conflicts
 
 from diffusers_helper.thread_utils import AsyncStream
+
+
+# Simple LIFO queue implementation to avoid dependency on queue.LifoQueue
+class SimpleLifoQueue:
+    def __init__(self):
+        self._queue = []
+        self._mutex = threading.Lock()
+        self._not_empty = threading.Condition(self._mutex)
+    
+    def put(self, item):
+        with self._mutex:
+            self._queue.append(item)
+            self._not_empty.notify()
+    
+    def get(self):
+        with self._not_empty:
+            while not self._queue:
+                self._not_empty.wait()
+            return self._queue.pop()
+    
+    def task_done(self):
+        pass  # For compatibility with queue.Queue
 
 
 class JobStatus(Enum):
@@ -33,12 +55,17 @@ class Job:
 
 class VideoJobQueue:
     def __init__(self):
-        self.queue = queue.Queue()
+        self.queue = queue_module.Queue()  # Using standard Queue instead of LifoQueue
         self.jobs = {}
         self.current_job = None
         self.lock = threading.Lock()
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
+        self.worker_function = None  # Will be set from outside
+    
+    def set_worker_function(self, worker_function):
+        """Set the worker function to use for processing jobs"""
+        self.worker_function = worker_function
     
     def add_job(self, params):
         """Add a job to the queue and return its ID"""
@@ -125,13 +152,13 @@ class VideoJobQueue:
                     self.current_job = job
                 
                 try:
-                    # Import worker function here to avoid circular imports
-                    from studio import worker
+                    if self.worker_function is None:
+                        raise ValueError("Worker function not set. Call set_worker_function() first.")
                     
                     # Start the worker function with the job parameters
                     from diffusers_helper.thread_utils import async_run
                     async_run(
-                        worker,
+                        self.worker_function,
                         **job.params,
                         job_stream=job.stream
                     )
