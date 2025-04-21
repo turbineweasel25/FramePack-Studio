@@ -8,7 +8,7 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
 - **Improved Prompt Adherence**: Better alignment between your text descriptions and the generated video
 - **Queue System**: Process multiple generation jobs without blocking the interface
 
-## Installation
+## Fresh Installation
 
 ### Prerequisites
 
@@ -28,10 +28,16 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
    pip install -r requirements.txt
    ```
 
-3. (Optional) Create a Hugging Face token if you want to access gated models:
-   - Create an account on [Hugging Face](https://huggingface.co/)
-   - Generate a token in your account settings
-   - Set it as an environment variable: `export HF_TOKEN=your_token_here`
+## Add to an Existing FramePack Installation
+
+### Setup
+
+1. Drop studio.py, the 'modules' folder and requirements.txt into the root of your FramePack installation.
+
+2. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
 ## Usage
 
