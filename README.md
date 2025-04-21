@@ -1,6 +1,7 @@
 # FramePack Studio
 
-FramePack Studio is an enhanced version of the FramePack demo script, designed to create intricate video scenes with improved prompt adherence. 
+FramePack Studio is an enhanced version of the FramePack demo script, designed to create intricate video scenes with improved prompt adherence. This is very much a work in progress, expect some bugs and broken features. 
+
 ## Current Features
 
 - **Timestamped Prompts**: Define different prompts for specific time segments in your video
