@@ -37,7 +37,7 @@ def create_interface(
     block = gr.Blocks(css=css).queue()
     
     with block:
-        gr.Markdown('# FramePack with Timestamped Prompts')
+        gr.Markdown('# FramePack Studio')
         
         with gr.Tabs():
             with gr.TabItem("Generate"):
@@ -54,7 +54,16 @@ def create_interface(
                             monitor_button = gr.Button(value="Monitor Selected Job")
                             end_button = gr.Button(value="Cancel Current Job", interactive=True)
 
-                        with gr.Group():
+                        
+                    with gr.Column():
+                        current_job_id = gr.Textbox(label="Current Job ID", visible=True, interactive=True)
+                        preview_image = gr.Image(label="Next Latents", height=200, visible=False)
+                        result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
+                        gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
+                        progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
+                        progress_bar = gr.HTML('', elem_classes='no-generating-animation')
+
+                        with gr.Group("Generation Params"):
                             use_teacache = gr.Checkbox(label='Use TeaCache', value=True, info='Faster speed, but often makes hands and fingers slightly worse.')
 
                             n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
@@ -70,13 +79,6 @@ def create_interface(
 
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
 
-                    with gr.Column():
-                        current_job_id = gr.Textbox(label="Current Job ID", visible=True, interactive=True)
-                        preview_image = gr.Image(label="Next Latents", height=200, visible=False)
-                        result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
-                        gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
-                        progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
-                        progress_bar = gr.HTML('', elem_classes='no-generating-animation')
             
             with gr.TabItem("Queue Status"):
                 queue_status = gr.DataFrame(
