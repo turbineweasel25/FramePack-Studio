@@ -63,6 +63,7 @@ class VideoJobQueue:
         self.worker_thread = threading.Thread(target=self._worker_loop, daemon=True)
         self.worker_thread.start()
         self.worker_function = None  # Will be set from outside
+        self.is_processing = False  # Flag to track if we're currently processing a job
     
     def set_worker_function(self, worker_function):
         """Set the worker function to use for processing jobs"""
@@ -105,7 +106,7 @@ class VideoJobQueue:
                 job.status = JobStatus.CANCELLED
                 job.completed_at = time.time()  # Mark completion time
                 return True
-            elif job and job.status == JobStatus.RUNNING and job.stream:
+            elif job and job.status == JobStatus.RUNNING:
                 # Send cancel signal to the job's stream
                 job.stream.input_queue.push('end')
                 # Mark job as cancelled (this will be confirmed when the worker processes the end signal)
@@ -159,10 +160,19 @@ class VideoJobQueue:
                         self.queue.task_done()
                         continue
                     
+                    # If we're already processing a job, wait for it to complete
+                    if self.is_processing:
+                        # Put the job back in the queue
+                        self.queue.put(job_id)
+                        self.queue.task_done()
+                        time.sleep(0.1)  # Small delay to prevent busy waiting
+                        continue
+                    
                     print(f"Starting job {job_id}, current job was {self.current_job.id if self.current_job else 'None'}")
                     job.status = JobStatus.RUNNING
                     job.started_at = time.time()
                     self.current_job = job
+                    self.is_processing = True
                 
                 try:
                     if self.worker_function is None:
@@ -207,41 +217,28 @@ class VideoJobQueue:
                             elif flag == 'end':
                                 break
                                 
-                        except queue_module.Empty:
-                            # If we get a timeout, just continue checking for cancellation
-                            continue
                         except Exception as e:
-                            print(f"Error processing stream output: {e}")
-                            break
+                            # Handle timeout or other errors
+                            if str(e) != "timeout":
+                                print(f"Error processing job output: {e}")
+                            continue
                     
-                    with self.lock:
-                        # Only update status if it's not already cancelled
-                        if job.status != JobStatus.CANCELLED:
-                            job.status = JobStatus.COMPLETED
-                        
-                        # Only set completed_at if not already set
-                        if job.completed_at is None:
-                            job.completed_at = time.time()
-                
                 except Exception as e:
-                    import traceback
-                    traceback.print_exc()
+                    print(f"Error processing job {job_id}: {e}")
                     with self.lock:
-                        # Only update status if it's not already cancelled
-                        if job.status != JobStatus.CANCELLED:
-                            job.status = JobStatus.FAILED
-                            job.error = str(e)
-                        
-                        # Only set completed_at if not already set
-                        if job.completed_at is None:
-                            job.completed_at = time.time()
+                        job.status = JobStatus.FAILED
+                        job.error = str(e)
+                        job.completed_at = time.time()
                 
                 finally:
                     with self.lock:
-                        if self.current_job and self.current_job.id == job_id:
-                            self.current_job = None
-                    self.queue.task_done()
-            
+                        if job.status == JobStatus.RUNNING:
+                            job.status = JobStatus.COMPLETED
+                            job.completed_at = time.time()
+                        self.is_processing = False
+                        self.current_job = None
+                        self.queue.task_done()
+                
             except Exception as e:
                 print(f"Error in worker loop: {e}")
-                # Continue processing other jobs
+                time.sleep(0.1)  # Prevent tight loop on error
