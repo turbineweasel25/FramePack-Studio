@@ -289,6 +289,19 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                        f'Current position: {current_pos:.2f}s (original: {original_pos:.2f}s). ' \
                        f'Using prompt: "{current_prompt[:50]}..."'
                 
+                # Store progress data in a format that includes the preview image
+                progress_data = {
+                    'preview': preview,
+                    'desc': desc,
+                    'html': make_progress_bar_html(percentage, hint)
+                }
+                
+                # Update the job's progress data in the queue
+                if job_stream is not None:
+                    job = job_queue.get_job(job_id)
+                    if job:
+                        job.progress_data = progress_data
+                
                 stream_to_use.output_queue.push(('progress', (preview, desc, make_progress_bar_html(percentage, hint))))
                 return
 
@@ -396,17 +409,27 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
     job_id = job_queue.add_job(job_params)
     print(f"Added job {job_id} to queue")
     
+    queue_status = update_queue_status()
     # Return immediately after adding to queue
     return None, job_id, None, '', f'Job added to queue. Job ID: {job_id}', gr.update(interactive=True), gr.update(interactive=True)
 
 
 def end_process():
-    # Only cancel the current running job
+    """Cancel the current running job and update the queue status"""
     with job_queue.lock:
         if job_queue.current_job:
             job_id = job_queue.current_job.id
             print(f"Cancelling job {job_id}")
-            job_queue.cancel_job(job_id)
+            # Send the end signal to the job's stream
+            if job_queue.current_job.stream:
+                job_queue.current_job.stream.input_queue.push('end')
+            # Also mark the job as cancelled in case the stream handling doesn't work
+            job_queue.current_job.status = JobStatus.CANCELLED
+            # Force an update to the queue status
+            return update_queue_status()
+    
+    # If no job is running, just update the queue status
+    return update_queue_status()
 
 
 def update_queue_status():
@@ -419,19 +442,19 @@ def update_queue_status():
 
 def monitor_job(job_id):
     if not job_id:
-        return None, None, '', 'No job ID provided', gr.update(interactive=True), gr.update(interactive=True)
+        return None, None, None, '', 'No job ID provided', gr.update(interactive=True), gr.update(interactive=True)
     
     job = job_queue.get_job(job_id)
     
     if not job:
-        return None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
+        return None, None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
     
     # Poll for job status and updates
     while True:
         job = job_queue.get_job(job_id)
         
         if not job:
-            return None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
+            return None, None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
         
         if job.status == JobStatus.PENDING:
             position = job_queue.get_queue_position(job_id)
@@ -442,24 +465,26 @@ def monitor_job(job_id):
                 preview = job.progress_data.get('preview')
                 desc = job.progress_data.get('desc', '')
                 html = job.progress_data.get('html', '')
+                # Make sure preview is visible and updated with the latest image
                 yield gr.update(), job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), gr.update(interactive=True)
             else:
                 yield None, job_id, None, '', 'Processing...', gr.update(interactive=True), gr.update(interactive=True)
         
         elif job.status == JobStatus.COMPLETED:
-            yield job.result, job_id, gr.update(visible=False), gr.update(), '', gr.update(interactive=True), gr.update(interactive=True)
+            yield job.result, job_id, gr.update(visible=False), '', '', gr.update(interactive=True), gr.update(interactive=True)
             break
         
         elif job.status == JobStatus.FAILED:
-            yield None, job_id, gr.update(visible=False), gr.update(), f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True)
+            yield None, job_id, gr.update(visible=False), '', f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True)
             break
         
         elif job.status == JobStatus.CANCELLED:
-            yield None, job_id, gr.update(visible=False), gr.update(), 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True)
+            yield None, job_id, gr.update(visible=False), '', 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True)
             break
         
         # Wait a bit before checking again
         time.sleep(0.5)
+
 
 
 # Create the interface
