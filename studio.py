@@ -416,31 +416,42 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
 
 def end_process():
     """Cancel the current running job and update the queue status"""
+    print("Cancelling current job")
     with job_queue.lock:
         if job_queue.current_job:
             job_id = job_queue.current_job.id
             print(f"Cancelling job {job_id}")
+            
             # Send the end signal to the job's stream
             if job_queue.current_job.stream:
                 job_queue.current_job.stream.input_queue.push('end')
-            # Also mark the job as cancelled in case the stream handling doesn't work
+                
+            # Mark the job as cancelled
             job_queue.current_job.status = JobStatus.CANCELLED
-            # Force an update to the queue status
-            return update_queue_status()
+            job_queue.current_job.completed_at = time.time()  # Set completion time
     
-    # If no job is running, just update the queue status
+    # Force an update to the queue status
     return update_queue_status()
 
 
+
 def update_queue_status():
+    """Update queue status and refresh job positions"""
     jobs = job_queue.get_all_jobs()
     for job in jobs:
         if job.status == JobStatus.PENDING:
             job.queue_position = job_queue.get_queue_position(job.id)
+    
+    # Make sure to update current running job info
+    if job_queue.current_job:
+        # Make sure the running job is showing status = RUNNING
+        job_queue.current_job.status = JobStatus.RUNNING
+    
     return format_queue_status(jobs)
 
 
 def monitor_job(job_id):
+    """Monitor a specific job with improved error handling"""
     if not job_id:
         return None, None, None, '', 'No job ID provided', gr.update(interactive=True), gr.update(interactive=True)
     
@@ -449,7 +460,9 @@ def monitor_job(job_id):
     if not job:
         return None, None, None, '', 'Job not found', gr.update(interactive=True), gr.update(interactive=True)
     
-    # Poll for job status and updates
+    # Make sure preview is visible from the start
+    yield None, job_id, gr.update(visible=True), '', 'Initializing job...', gr.update(interactive=True), gr.update(interactive=True)
+    
     while True:
         job = job_queue.get_job(job_id)
         
@@ -458,36 +471,41 @@ def monitor_job(job_id):
         
         if job.status == JobStatus.PENDING:
             position = job_queue.get_queue_position(job_id)
-            yield None, job_id, None, '', f'Waiting in queue. Position: {position}', gr.update(interactive=True), gr.update(interactive=True)
+            yield None, job_id, gr.update(visible=True), '', f'Waiting in queue. Position: {position}', gr.update(interactive=True), gr.update(interactive=True)
         
         elif job.status == JobStatus.RUNNING:
-            if job.progress_data:
+            if job.progress_data and 'preview' in job.progress_data:
                 preview = job.progress_data.get('preview')
                 desc = job.progress_data.get('desc', '')
                 html = job.progress_data.get('html', '')
-                # Make sure preview is visible and updated with the latest image
-                yield gr.update(), job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), gr.update(interactive=True)
+                
+                # Debug print to see what's in the preview
+                print(f"Preview data type: {type(preview)}, shape: {getattr(preview, 'shape', 'N/A')}")
+                
+                # Always keep preview visible and update its value
+                yield None, job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), gr.update(interactive=True)
             else:
-                yield None, job_id, None, '', 'Processing...', gr.update(interactive=True), gr.update(interactive=True)
+                # Keep preview visible even when no data
+                yield None, job_id, gr.update(visible=True), '', 'Processing...', gr.update(interactive=True), gr.update(interactive=True)
         
         elif job.status == JobStatus.COMPLETED:
-            yield job.result, job_id, gr.update(visible=False), '', '', gr.update(interactive=True), gr.update(interactive=True)
+            # Don't hide preview on completion
+            yield job.result, job_id, gr.update(visible=True), '', '', gr.update(interactive=True), gr.update(interactive=True)
             break
         
         elif job.status == JobStatus.FAILED:
-            yield None, job_id, gr.update(visible=False), '', f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True)
+            yield None, job_id, gr.update(visible=True), '', f'Error: {job.error}', gr.update(interactive=True), gr.update(interactive=True)
             break
         
         elif job.status == JobStatus.CANCELLED:
-            yield None, job_id, gr.update(visible=False), '', 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True)
+            yield None, job_id, gr.update(visible=True), '', 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True)
             break
         
         # Wait a bit before checking again
         time.sleep(0.5)
 
 
-
-# Create the interface
+# Create the interface using the updated version that supports auto-monitoring
 interface = create_interface(
     process_fn=process,
     monitor_fn=monitor_job,

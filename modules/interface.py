@@ -51,7 +51,7 @@ def create_interface(
 
                         with gr.Row():
                             start_button = gr.Button(value="Add to Queue")
-                            monitor_button = gr.Button(value="Monitor Current Job")
+                            # Removed the monitor button since we'll auto-monitor
                             end_button = gr.Button(value="Cancel Current Job", interactive=True)
 
                         with gr.Row():    
@@ -61,14 +61,9 @@ def create_interface(
                                 label="Job Queue"
                             )
 
-                        with gr.Row():
-                            refresh_button = gr.Button("Refresh Queue Status")
-                            refresh_button.click(update_queue_status_fn, outputs=[queue_status])
-
-                        
                     with gr.Column():
                         current_job_id = gr.Textbox(label="Current Job ID", visible=True, interactive=True)
-                        preview_image = gr.Image(label="Next Latents", height=200, visible=True)
+                        preview_image = gr.Image(label="Next Latents", height=200, visible=True, type="numpy")
                         result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
                         gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
                         progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
@@ -89,27 +84,86 @@ def create_interface(
                             rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
 
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
+                
+        # Add a refresh timer that updates the queue status every 2 seconds
+        refresh_timer = gr.Number(value=0, visible=False)
+        
+        def refresh_timer_fn():
+            """Updates the timer value periodically to trigger queue refresh"""
+            return int(time.time())
+            
+        # Connect the main process function
+        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache]
+        
+        # Modified process function that updates the queue status after adding a job
+        def process_with_queue_update(*args):
+            # Call the original process function
+            result = process_fn(*args)
+            # If a job ID was created, automatically start monitoring it and update queue
+            if result and result[1]:  # Check if job_id exists in results
+                job_id = result[1]
+                queue_status_data = update_queue_status_fn()
+                return [result[0], job_id, result[2], result[3], result[4], result[5], result[6], queue_status_data]
+            return result + [update_queue_status_fn()]
+            
+        # Custom end process function that ensures the queue is updated
+        def end_process_with_update():
+            queue_status_data = end_process_fn()
+            # Make sure to return the queue status data
+            return queue_status_data
 
             
-            
-                
+        # Connect the buttons to their respective functions
+        start_button.click(
+            fn=process_with_queue_update, 
+            inputs=ips, 
+            outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button, queue_status]
+        )
         
-        # Connect the main process
-        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache]
-        start_button.click(fn=process_fn, inputs=ips, outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button])
-        
-        # Add monitor functionality
-        monitor_button.click(fn=monitor_fn, inputs=[current_job_id], outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button])
-        
-        # Add cancel functionality
+        # Connect the end button to cancel the current job and update the queue
         end_button.click(
-            fn=lambda: (end_process_fn(), update_queue_status_fn()),
+            fn=end_process_with_update,
             outputs=[queue_status]
         )
-    
+        
+        # Auto-monitor the current job when job_id changes
+        current_job_id.change(
+            fn=monitor_fn,
+            inputs=[current_job_id],
+            outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button]
+        )
+        
+        # Set up auto-refresh for queue status
+        refresh_timer.change(
+            fn=update_queue_status_fn,
+            outputs=[queue_status]
+        )
+        
+        # Create a timer event every 2 seconds
+        def start_refresh_timer():
+            """Function to start a thread that updates the queue status periodically"""
+            import threading
+            
+            def refresh_loop():
+                while True:
+                    # Sleep for 2 seconds
+                    time.sleep(2)
+                    # Update the timer value to trigger the queue refresh
+                    # We need to use .update() instead of direct assignment to trigger Gradio's update
+                    try:
+                        refresh_timer.update(int(time.time()))
+                    except:
+                        # If the interface is closed, this will throw an exception
+                        break
+            
+            # Start the refresh thread
+            thread = threading.Thread(target=refresh_loop, daemon=True)
+            thread.start()
+
+        # Then after defining your interface but before returning it:
+        start_refresh_timer()
+            
     return block
-
-
 
 
 def format_queue_status(jobs):
@@ -122,11 +176,18 @@ def format_queue_status(jobs):
 
         # Calculate elapsed time
         elapsed_time = ""
-        if job.started_at and job.completed_at:
-            start_datetime = datetime.datetime.fromtimestamp(job.started_at)
-            complete_datetime = datetime.datetime.fromtimestamp(job.completed_at)
-            elapsed_seconds = (complete_datetime - start_datetime).total_seconds()
-            elapsed_time = str(elapsed_seconds) # Convert to string
+        if job.started_at:
+            if job.completed_at:
+                start_datetime = datetime.datetime.fromtimestamp(job.started_at)
+                complete_datetime = datetime.datetime.fromtimestamp(job.completed_at)
+                elapsed_seconds = (complete_datetime - start_datetime).total_seconds()
+                elapsed_time = f"{elapsed_seconds:.2f}s"
+            else:
+                # For running jobs, calculate elapsed time from now
+                start_datetime = datetime.datetime.fromtimestamp(job.started_at)
+                current_datetime = datetime.datetime.now()
+                elapsed_seconds = (current_datetime - start_datetime).total_seconds()
+                elapsed_time = f"{elapsed_seconds:.2f}s (running)"
 
         position = job.queue_position if hasattr(job, 'queue_position') else ""
 
@@ -140,5 +201,3 @@ def format_queue_status(jobs):
             str(position) if position is not None else ""
         ])
     return rows
-
-

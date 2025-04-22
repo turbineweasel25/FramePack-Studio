@@ -61,13 +61,11 @@ class FIFOQueue:
                 return self.queue[0]
             return None
 
-    def next(self):
-        while True:
-            with self.lock:
-                if self.queue:
-                    return self.queue.pop(0)
-
-            time.sleep(0.001)
+    def next(self, timeout=None):
+        try:
+            return self.output_queue.get(timeout=timeout)
+        except queue_module.Empty:
+            raise
 
 
 class AsyncStream:

@@ -81,6 +81,7 @@ class VideoJobQueue:
         )
         
         with self.lock:
+            print(f"Adding job {job_id} to queue, current job is {self.current_job.id if self.current_job else 'None'}")
             self.jobs[job_id] = job
             self.queue.put(job_id)
         
@@ -102,9 +103,14 @@ class VideoJobQueue:
             job = self.jobs.get(job_id)
             if job and job.status == JobStatus.PENDING:
                 job.status = JobStatus.CANCELLED
+                job.completed_at = time.time()  # Mark completion time
                 return True
             elif job and job.status == JobStatus.RUNNING and job.stream:
+                # Send cancel signal to the job's stream
                 job.stream.input_queue.push('end')
+                # Mark job as cancelled (this will be confirmed when the worker processes the end signal)
+                job.status = JobStatus.CANCELLED
+                job.completed_at = time.time()  # Mark completion time
                 return True
             return False
     
@@ -144,10 +150,16 @@ class VideoJobQueue:
                 
                 with self.lock:
                     job = self.jobs.get(job_id)
-                    if not job or job.status == JobStatus.CANCELLED:
+                    if not job:
                         self.queue.task_done()
                         continue
                     
+                    # Skip cancelled jobs
+                    if job.status == JobStatus.CANCELLED:
+                        self.queue.task_done()
+                        continue
+                    
+                    print(f"Starting job {job_id}, current job was {self.current_job.id if self.current_job else 'None'}")
                     job.status = JobStatus.RUNNING
                     job.started_at = time.time()
                     self.current_job = job
@@ -166,52 +178,68 @@ class VideoJobQueue:
                     
                     # Process the results from the stream
                     output_filename = None
-                    cancelled = False
                     
                     while True:
                         # Check if job has been cancelled before processing next output
                         with self.lock:
                             if job.status == JobStatus.CANCELLED:
-                                cancelled = True
+                                # Break out of the loop if the job was cancelled
                                 break
                         
-                        flag, data = job.stream.output_queue.next()
-                        
-                        if flag == 'file':
-                            output_filename = data
-                            with self.lock:
-                                job.result = output_filename
-                        
-                        elif flag == 'progress':
-                            preview, desc, html = data
-                            with self.lock:
-                                job.progress_data = {
-                                    'preview': preview,
-                                    'desc': desc,
-                                    'html': html
-                                }
-                        
-                        elif flag == 'end':
+                        try:
+                            # Use a timeout to avoid blocking indefinitely
+                            flag, data = job.stream.output_queue.next(timeout=0.5)
+                            
+                            if flag == 'file':
+                                output_filename = data
+                                with self.lock:
+                                    job.result = output_filename
+                            
+                            elif flag == 'progress':
+                                preview, desc, html = data
+                                with self.lock:
+                                    job.progress_data = {
+                                        'preview': preview,
+                                        'desc': desc,
+                                        'html': html
+                                    }
+                            
+                            elif flag == 'end':
+                                break
+                                
+                        except queue_module.Empty:
+                            # If we get a timeout, just continue checking for cancellation
+                            continue
+                        except Exception as e:
+                            print(f"Error processing stream output: {e}")
                             break
                     
                     with self.lock:
-                        if cancelled:
-                            job.status = JobStatus.CANCELLED
-                        else:
+                        # Only update status if it's not already cancelled
+                        if job.status != JobStatus.CANCELLED:
                             job.status = JobStatus.COMPLETED
-                        job.completed_at = time.time()
+                        
+                        # Only set completed_at if not already set
+                        if job.completed_at is None:
+                            job.completed_at = time.time()
                 
                 except Exception as e:
                     import traceback
                     traceback.print_exc()
                     with self.lock:
-                        job.status = JobStatus.FAILED
-                        job.error = str(e)
-                        job.completed_at = time.time()
+                        # Only update status if it's not already cancelled
+                        if job.status != JobStatus.CANCELLED:
+                            job.status = JobStatus.FAILED
+                            job.error = str(e)
+                        
+                        # Only set completed_at if not already set
+                        if job.completed_at is None:
+                            job.completed_at = time.time()
                 
                 finally:
                     with self.lock:
-                        self.current_job = None
+                        if self.current_job and self.current_job.id == job_id:
+                            self.current_job = None
                     self.queue.task_done()
             
             except Exception as e:
