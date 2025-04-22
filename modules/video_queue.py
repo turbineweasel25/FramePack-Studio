@@ -1,9 +1,9 @@
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import queue as queue_module  # Renamed to avoid conflicts
 
 from diffusers_helper.thread_utils import AsyncStream
@@ -49,8 +49,9 @@ class Job:
     completed_at: Optional[float] = None
     result: Optional[str] = None  # Path to output video
     error: Optional[str] = None
-    progress_data: Dict[str, Any] = None  # Store latest progress data
+    progress_data: Dict[str, Any] = field(default_factory=dict)  # Store latest progress data
     stream: Optional[AsyncStream] = None  # Stream for this job
+    queue_position: Optional[int] = None  # Position in queue for display
 
 
 class VideoJobQueue:
@@ -165,7 +166,15 @@ class VideoJobQueue:
                     
                     # Process the results from the stream
                     output_filename = None
+                    cancelled = False
+                    
                     while True:
+                        # Check if job has been cancelled before processing next output
+                        with self.lock:
+                            if job.status == JobStatus.CANCELLED:
+                                cancelled = True
+                                break
+                        
                         flag, data = job.stream.output_queue.next()
                         
                         if flag == 'file':
@@ -186,7 +195,10 @@ class VideoJobQueue:
                             break
                     
                     with self.lock:
-                        job.status = JobStatus.COMPLETED
+                        if cancelled:
+                            job.status = JobStatus.CANCELLED
+                        else:
+                            job.status = JobStatus.COMPLETED
                         job.completed_at = time.time()
                 
                 except Exception as e:
