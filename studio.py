@@ -1,5 +1,6 @@
 from diffusers_helper.hf_login import login
 
+import json
 import os
 import time
 import argparse
@@ -169,6 +170,23 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             metadata.add_text("prompt", prompt_text)
             metadata.add_text("seed", str(seed))
             Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'), pnginfo=metadata)
+        
+            #save in JSON too since gradio can't extract metadata from a PNG upload. Let's save some more stuff too.
+            import json
+            metadata_dict = {
+                "prompt": prompt_text,
+                "seed": seed,
+                "total_second_length": total_second_length,
+                "steps": steps,
+                "cfg": cfg,
+                "gs": gs,
+                "rs": rs,
+                "latent_window_size" : latent_window_size,
+                "mp4_crf" : mp4_crf,
+                "timestamp": time.time()
+            }
+            with open(os.path.join(outputs_folder, f'{job_id}.json'), 'w') as f:
+                json.dump(metadata_dict, f, indent=2)
         else:
             Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'))
 

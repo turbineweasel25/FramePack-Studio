@@ -59,7 +59,8 @@ def create_interface(
                             label="Image",
                             height=320,
                             elem_classes="contain-image"
-                        )   
+                        )
+
                         
                         prompt = gr.Textbox(label="Prompt", value=default_prompt)
 
@@ -68,36 +69,38 @@ def create_interface(
                         
                         with gr.Accordion("Generation Parameters", open=False):
 
-                            use_teacache = gr.Checkbox(label='Use TeaCache', value=True, info='Faster speed, but often makes hands and fingers slightly worse.')
+                            with gr.Row():
+                                json_upload = gr.File(
+                                    label="Upload Metadata JSON (optional)",
+                                    file_types=[".json"],
+                                    type="filepath",
+                                    height=150,
+                                )
+                                save_metadata = gr.Checkbox(label="Save Metadata", value=True, info="Store prompt/seed in output image metadata. Saves all generation params in a JSON file with the same name")   
+                            with gr.Row():
+                                use_teacache = gr.Checkbox(label='Use TeaCache', value=True, info='Faster speed, but often makes hands and fingers slightly worse.')
 
-                            n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
+                                n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
                             
                             with gr.Row():
-                                with gr.Column():
-                                    seed = gr.Number(label="Seed", value=31337, precision=0)
-                                with gr.Column():
-                                    randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
-                                    save_metadata = gr.Checkbox(label="Save Metadata", value=True, info="Store prompt/seed in output image metadata.")
-                            
+                                seed = gr.Number(label="Seed", value=31337, precision=0)
+                                randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
+
                             total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
-                            latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=False)  # Should not change
+                            latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=True, info='Change at your own risk, very experimental')  # Should not change
                             steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1, info='Changing this value is not recommended.')
 
                             cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=1.0, step=0.01, visible=False)  # Should not change
-                            gs = gr.Slider(label="Distilled CFG Scale", minimum=1.0, maximum=32.0, value=10.0, step=0.01, info='Changing this value is not recommended.')
+                            gs = gr.Slider(label="Distilled CFG Scale", minimum=1.0, maximum=32.0, value=10.0, step=0.01)
                             rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
+                            mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=0, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
 
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
-                            
-                            mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=16, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
-                            
+
                         with gr.Row():
                             start_button = gr.Button(value="Add to Queue")
                             # Removed the monitor button since we'll auto-monitor
                             
-
-                        
-
                     with gr.Column():
                         preview_image = gr.Image(label="Next Latents", height=150, visible=True, type="numpy")
                         result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=256, loop=True)
@@ -157,6 +160,33 @@ def create_interface(
             # Make sure to return the queue status data
             return queue_status_data
 
+        # Load that metadata!
+        def load_metadata_from_json(json_path):
+            if not json_path:
+                return [gr.update(), gr.update()]
+            
+            try:
+                import json
+                
+                with open(json_path, 'r') as f:
+                    metadata = json.load(f)
+                
+                prompt = metadata.get('prompt')
+                seed = metadata.get('seed')
+                
+                print(f"Loaded metadata from JSON: {json_path}")
+                print(f"Prompt: {prompt}, Seed: {seed}")
+                
+                # Update the UI components
+                return [
+                    gr.update(value=prompt) if prompt else gr.update(),
+                    gr.update(value=seed) if seed is not None else gr.update()
+                ]
+                
+            except Exception as e:
+                print(f"Error loading metadata: {e}")
+                return [gr.update(), gr.update()]    
+
             
         # Connect the buttons to their respective functions
         start_button.click(
@@ -184,6 +214,13 @@ def create_interface(
             outputs=[queue_status]
         )
         
+        #JSON
+        json_upload.change(
+            fn=load_metadata_from_json,
+            inputs=[json_upload],
+            outputs=[prompt, seed]
+        )
+
         # Create a timer event every 2 seconds
         def start_refresh_timer():
             """Function to start a thread that updates the queue status periodically"""
