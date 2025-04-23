@@ -85,7 +85,9 @@ def create_interface(
                             rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
 
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
-
+                            
+                            mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=16, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
+                            
                         with gr.Row():
                             start_button = gr.Button(value="Add to Queue")
                             # Removed the monitor button since we'll auto-monitor
@@ -121,7 +123,7 @@ def create_interface(
         # Function to handle randomizing the seed if checkbox is checked
         def process_with_random_seed(*args):
             # Extract all arguments
-            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, randomize_seed_checked = args
+            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed_checked = args
             
             # If randomize seed is checked, generate a new random seed
             if randomize_seed_checked:
@@ -129,10 +131,10 @@ def create_interface(
                 print(f"Randomized seed: {seed_value}")
             
             # Call the original process function with the potentially updated seed
-            return process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache)
+            return process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf)
             
         # Connect the main process function
-        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, randomize_seed]
+        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed]
         
         # Modified process function that updates the queue status after adding a job
         def process_with_queue_update(*args):
