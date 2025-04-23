@@ -479,8 +479,7 @@ def monitor_job(job_id):
                 desc = job.progress_data.get('desc', '')
                 html = job.progress_data.get('html', '')
                 
-                # Debug print to see what's in the preview
-                print(f"Preview data type: {type(preview)}, shape: {getattr(preview, 'shape', 'N/A')}")
+                #print(f"Preview data type: {type(preview)}, shape: {getattr(preview, 'shape', 'N/A')}")
                 
                 # Always keep preview visible and update its value
                 yield None, job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), gr.update(interactive=True)

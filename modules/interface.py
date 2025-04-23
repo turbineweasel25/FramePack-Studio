@@ -1,6 +1,7 @@
 import gradio as gr
 import time
 import datetime
+import random
 from typing import List, Dict, Any, Optional
 
 from modules.video_queue import JobStatus
@@ -46,34 +47,17 @@ def create_interface(
                         input_image = gr.Image(sources='upload', type="numpy", label="Image", height=320)   
                         
                         prompt = gr.Textbox(label="Prompt", value=default_prompt)
-                        example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
-                        example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
-
-                        with gr.Row():
-                            start_button = gr.Button(value="Add to Queue")
-                            # Removed the monitor button since we'll auto-monitor
-                            end_button = gr.Button(value="Cancel Current Job", interactive=True)
-
-                        with gr.Row():    
-                            queue_status = gr.DataFrame(
-                                headers=["Job ID", "Status", "Created", "Started", "Completed", "Elapsed", "Queue Position"],
-                                datatype=["str", "str", "str", "str", "str", "str"],
-                                label="Job Queue"
-                            )
-
-                    with gr.Column():
-                        current_job_id = gr.Textbox(label="Current Job ID", visible=True, interactive=True)
-                        preview_image = gr.Image(label="Next Latents", height=200, visible=True, type="numpy")
-                        result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=512, loop=True)
-                        gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
-                        progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
-                        progress_bar = gr.HTML('', elem_classes='no-generating-animation')
-
-                        with gr.Group("Generation Params"):
+                        #example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
+                        #example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
+                        
+                        with gr.Accordion("Generation Parameters", open=False):
                             use_teacache = gr.Checkbox(label='Use TeaCache', value=True, info='Faster speed, but often makes hands and fingers slightly worse.')
 
                             n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
-                            seed = gr.Number(label="Seed", value=31337, precision=0)
+                            
+                            with gr.Row():
+                                seed = gr.Number(label="Seed", value=31337, precision=0)
+                                randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
 
                             total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
                             latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=False)  # Should not change
@@ -84,21 +68,60 @@ def create_interface(
                             rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
 
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
-                
+
+
+                        with gr.Row():
+                            start_button = gr.Button(value="Add to Queue")
+                            # Removed the monitor button since we'll auto-monitor
+                            end_button = gr.Button(value="Cancel Current Job", interactive=True)
+
+                        
+
+                    with gr.Column():
+                        preview_image = gr.Image(label="Next Latents", height=150, visible=True, type="numpy")
+                        result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=256, loop=True)
+                        #gr.Markdown('Note that the ending actions will be generated before the starting actions due to the inverted sampling. If the starting action is not in the video, you just need to wait, and it will be generated later.')
+                        progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
+                        progress_bar = gr.HTML('', elem_classes='no-generating-animation')
+
+                        with gr.Row():  
+                            current_job_id = gr.Textbox(label="Current Job ID", visible=True, interactive=True)  
+                        with gr.Row():     
+                            queue_status = gr.DataFrame(
+                                headers=["Job ID", "Status", "Created", "Started", "Completed", "Elapsed"],
+                                datatype=["str", "str", "str", "str", "str", "str"],
+                                label="Job Queue"
+                            )
+
+                        
         # Add a refresh timer that updates the queue status every 2 seconds
         refresh_timer = gr.Number(value=0, visible=False)
         
         def refresh_timer_fn():
             """Updates the timer value periodically to trigger queue refresh"""
             return int(time.time())
+        
+        # Function to handle randomizing the seed if checkbox is checked
+        def process_with_random_seed(*args):
+            # Extract all arguments
+            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, randomize_seed_checked = args
+            
+            # If randomize seed is checked, generate a new random seed
+            if randomize_seed_checked:
+                seed_value = random.randint(0, 2147483647)  # Max 32-bit integer
+                print(f"Randomized seed: {seed_value}")
+            
+            # Call the original process function with the potentially updated seed
+            return process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache)
             
         # Connect the main process function
-        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache]
+        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, randomize_seed]
         
         # Modified process function that updates the queue status after adding a job
         def process_with_queue_update(*args):
-            # Call the original process function
-            result = process_fn(*args)
+            # Call the process function with random seed handling
+            result = process_with_random_seed(*args)
+            
             # If a job ID was created, automatically start monitoring it and update queue
             if result and result[1]:  # Check if job_id exists in results
                 job_id = result[1]
@@ -192,12 +215,11 @@ def format_queue_status(jobs):
         position = job.queue_position if hasattr(job, 'queue_position') else ""
 
         rows.append([
-            job.id,
+            job.id[:6] + '...',
             job.status.value,
             created,
             started,
             completed,
-            elapsed_time,
-            str(position) if position is not None else ""
+            elapsed_time
         ])
     return rows
