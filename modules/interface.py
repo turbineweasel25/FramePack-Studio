@@ -73,9 +73,12 @@ def create_interface(
                             n_prompt = gr.Textbox(label="Negative Prompt", value="", visible=False)  # Not used
                             
                             with gr.Row():
-                                seed = gr.Number(label="Seed", value=31337, precision=0)
-                                randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
-
+                                with gr.Column():
+                                    seed = gr.Number(label="Seed", value=31337, precision=0)
+                                with gr.Column():
+                                    randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
+                                    save_metadata = gr.Checkbox(label="Save Metadata", value=True, info="Store prompt/seed in output image metadata.")
+                            
                             total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
                             latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=False)  # Should not change
                             steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1, info='Changing this value is not recommended.')
@@ -123,7 +126,7 @@ def create_interface(
         # Function to handle randomizing the seed if checkbox is checked
         def process_with_random_seed(*args):
             # Extract all arguments
-            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed_checked = args
+            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed_checked, save_metadata_checked = args
             
             # If randomize seed is checked, generate a new random seed
             if randomize_seed_checked:
@@ -131,10 +134,10 @@ def create_interface(
                 print(f"Randomized seed: {seed_value}")
             
             # Call the original process function with the potentially updated seed
-            return process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf)
+            return process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata_checked)
             
         # Connect the main process function
-        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed]
+        ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed, save_metadata]
         
         # Modified process function that updates the queue status after adding a job
         def process_with_queue_update(*args):

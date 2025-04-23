@@ -106,7 +106,7 @@ job_queue = VideoJobQueue()
 
 
 @torch.no_grad()
-def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, job_stream=None):
+def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata, job_stream=None):
     # Use the provided job_stream or the global stream
     stream_to_use = job_stream if job_stream is not None else stream
     
@@ -164,11 +164,13 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
         height, width = find_nearest_bucket(H, W, resolution=640)
         input_image_np = resize_and_center_crop(input_image, target_width=width, target_height=height)
 
-        metadata = PngInfo()
-        metadata.add_text("prompt", prompt_text)
-        metadata.add_text("seed", str(seed))
-
-        Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'), pnginfo=metadata)
+        if save_metadata:
+            metadata = PngInfo()
+            metadata.add_text("prompt", prompt_text)
+            metadata.add_text("seed", str(seed))
+            Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'), pnginfo=metadata)
+        else:
+            Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'))
 
         input_image_pt = torch.from_numpy(input_image_np).float() / 127.5 - 1
         input_image_pt = input_image_pt.permute(2, 0, 1)[None, :, None]
@@ -391,7 +393,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
 job_queue.set_worker_function(worker)
 
 
-def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
+def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata):
     assert input_image is not None, 'No input image!'
 
     # Create job parameters
@@ -408,7 +410,8 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
         'rs': rs,
         'gpu_memory_preservation': gpu_memory_preservation,
         'use_teacache': use_teacache,
-        'mp4_crf': mp4_crf
+        'mp4_crf': mp4_crf,
+        'save_metadata': save_metadata
     }
     
     # Add job to queue
