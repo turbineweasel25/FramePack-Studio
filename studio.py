@@ -105,7 +105,7 @@ job_queue = VideoJobQueue()
 
 
 @torch.no_grad()
-def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, job_stream=None):
+def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, job_stream=None):
     # Use the provided job_stream or the global stream
     stream_to_use = job_stream if job_stream is not None else stream
     
@@ -362,7 +362,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
 
             output_filename = os.path.join(outputs_folder, f'{job_id}_{total_generated_latent_frames}.mp4')
 
-            save_bcthw_as_mp4(history_pixels, output_filename, fps=30)
+            save_bcthw_as_mp4(history_pixels, output_filename, fps=30, crf=mp4_crf)
 
             print(f'Decoded. Current latent shape {real_history_latents.shape}; pixel shape {history_pixels.shape}')
 
@@ -386,7 +386,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
 job_queue.set_worker_function(worker)
 
 
-def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache):
+def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf):
     assert input_image is not None, 'No input image!'
 
     # Create job parameters
@@ -402,7 +402,8 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
         'gs': gs,
         'rs': rs,
         'gpu_memory_preservation': gpu_memory_preservation,
-        'use_teacache': use_teacache
+        'use_teacache': use_teacache,
+        'mp4_crf': mp4_crf
     }
     
     # Add job to queue
