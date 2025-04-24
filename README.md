@@ -8,7 +8,7 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
 - **Timestamped Prompts**: Define different prompts for specific time segments in your video
 - **Improved Prompt Adherence**: Better alignment between your text descriptions and the generated video
 - **Queue System**: Process multiple generation jobs without blocking the interface
-- **Metadata Saving**: Prompt and seed are encoded into the output PNG, all other generation metadata is saved in a JSON file for easier importing
+- **Metadata Saving/Import**: Prompt and seed are encoded into the output PNG, all other generation metadata is saved in a JSON file for easier importing
 
 ## Fresh Installation
 
