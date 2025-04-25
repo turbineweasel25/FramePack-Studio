@@ -57,7 +57,7 @@ def create_interface(
                             sources='upload',
                             type="numpy",
                             label="Image",
-                            height=320,
+                            height=420,
                             elem_classes="contain-image"
                         )
 
