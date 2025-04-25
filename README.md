@@ -70,7 +70,6 @@ Each timestamp defines when that prompt should start influencing the generation.
 ## Credits
 Many thanks to [Lvmin Zhang](https://github.com/lllyasviel) for the absolutely amazing work on the original [FramePack](https://github.com/lllyasviel/FramePack) code!
 
-## Cite
 
     @article{zhang2025framepack,
         title={Packing Input Frame Contexts in Next-Frame Prediction Models for Video Generation},

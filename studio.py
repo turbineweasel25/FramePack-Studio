@@ -1,3 +1,4 @@
+from diffusers_helper import lora_utils
 from diffusers_helper.hf_login import login
 
 import json
@@ -38,6 +39,7 @@ parser.add_argument('--share', action='store_true')
 parser.add_argument("--server", type=str, default='0.0.0.0')
 parser.add_argument("--port", type=int, required=False)
 parser.add_argument("--inbrowser", action='store_true')
+parser.add_argument("--lora", type=str, default=None, help="Lora path (comma separated for multiple)")
 args = parser.parse_args()
 
 print(args)
@@ -86,6 +88,34 @@ text_encoder_2.requires_grad_(False)
 image_encoder.requires_grad_(False)
 transformer.requires_grad_(False)
 
+# Create lora directory if it doesn't exist
+lora_dir = os.path.join(os.path.dirname(__file__), 'loras')
+os.makedirs(lora_dir, exist_ok=True)
+
+# Initialize LoRA support
+lora_names = []
+lora_values = []
+
+script_dir = os.path.dirname(os.path.abspath(__file__))
+
+# Define LoRA folder path relative to the script directory
+lora_folder = os.path.join(script_dir, "loras")
+
+if os.path.isdir(lora_folder):
+    # Get all files with .safetensors or other LoRA extensions
+    lora_files = [f for f in os.listdir(lora_folder) 
+                 if f.endswith('.safetensors') or f.endswith('.pt')]
+    
+    for lora_file in lora_files:
+        print(f"Loading lora {lora_file}")
+        transformer = lora_utils.load_lora(transformer, lora_folder, lora_file)
+        lora_names.append(lora_file.split('.')[0])
+    
+    if not lora_files:
+        print(f"No LoRA files found in {lora_folder}")
+else:
+    print(f"LoRA folder {lora_folder} does not exist")
+
 if not high_vram:
     # DynamicSwapInstaller is same as huggingface's enable_sequential_offload but 3x faster
     DynamicSwapInstaller.install_model(transformer, device=gpu)
@@ -106,10 +136,106 @@ os.makedirs(outputs_folder, exist_ok=True)
 job_queue = VideoJobQueue()
 
 
+def move_lora_adapters_to_device(model, target_device):
+    """
+    Move all LoRA adapters in a model to the specified device.
+    This handles the PEFT implementation of LoRA.
+    """
+    print(f"Moving all LoRA adapters to {target_device}")
+    
+    # First, find all modules with LoRA adapters
+    lora_modules = []
+    for name, module in model.named_modules():
+        if hasattr(module, 'active_adapter') and hasattr(module, 'lora_A') and hasattr(module, 'lora_B'):
+            lora_modules.append((name, module))
+    
+    # Now move all LoRA components to the target device
+    for name, module in lora_modules:
+        # Get the active adapter name
+        active_adapter = module.active_adapter
+        
+        # Move the LoRA layers to the target device
+        if active_adapter is not None:
+            if isinstance(module.lora_A, torch.nn.ModuleDict):
+                # Handle ModuleDict case (PEFT implementation)
+                for adapter_name in list(module.lora_A.keys()):
+                    # Move lora_A
+                    if adapter_name in module.lora_A:
+                        module.lora_A[adapter_name] = module.lora_A[adapter_name].to(target_device)
+                    
+                    # Move lora_B
+                    if adapter_name in module.lora_B:
+                        module.lora_B[adapter_name] = module.lora_B[adapter_name].to(target_device)
+                    
+                    # Move scaling
+                    if hasattr(module, 'scaling') and isinstance(module.scaling, dict) and adapter_name in module.scaling:
+                        if isinstance(module.scaling[adapter_name], torch.Tensor):
+                            module.scaling[adapter_name] = module.scaling[adapter_name].to(target_device)
+            else:
+                # Handle direct attribute case
+                if hasattr(module, 'lora_A') and module.lora_A is not None:
+                    module.lora_A = module.lora_A.to(target_device)
+                if hasattr(module, 'lora_B') and module.lora_B is not None:
+                    module.lora_B = module.lora_B.to(target_device)
+                if hasattr(module, 'scaling') and module.scaling is not None:
+                    if isinstance(module.scaling, torch.Tensor):
+                        module.scaling = module.scaling.to(target_device)
+    
+    print(f"Moved all LoRA adapters to {target_device}")
+    return model
+
+
+# Function to load a LoRA file
+def load_lora_file(lora_file):
+    if not lora_file:
+        return None, "No file selected"
+    
+    try:
+        # Get the filename from the path
+        _, lora_name = os.path.split(lora_file)
+        
+        # Copy the file to the lora directory
+        lora_dest = os.path.join(lora_dir, lora_name)
+        import shutil
+        shutil.copy(lora_file, lora_dest)
+        
+        # Load the LoRA
+        global transformer, lora_names
+        transformer = lora_utils.load_lora(transformer, lora_dir, lora_name)
+        
+        # Add to lora_names if not already there
+        lora_base_name = lora_name.split('.')[0]
+        if lora_base_name not in lora_names:
+            lora_names.append(lora_base_name)
+        
+        # Get the current device of the transformer
+        device = next(transformer.parameters()).device
+        
+        # Move all LoRA adapters to the same device as the base model
+        move_lora_adapters_to_device(transformer, device)
+        
+        print(f"Loaded LoRA: {lora_name}")
+        return gr.update(choices=lora_names), f"Successfully loaded LoRA: {lora_name}"
+    except Exception as e:
+        print(f"Error loading LoRA: {e}")
+        return None, f"Error loading LoRA: {e}"
+
+
 @torch.no_grad()
-def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata, job_stream=None):
+def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata, lora_values=None, job_stream=None):
     # Use the provided job_stream or the global stream
     stream_to_use = job_stream if job_stream is not None else stream
+
+    print(f"Worker received lora_values: {lora_values}, type: {type(lora_values)}")
+    if lora_values and isinstance(lora_values, tuple) and len(lora_values) > 0:
+        print(f"First lora value: {lora_values[0]}, type: {type(lora_values[0])}")
+    
+    # Apply LoRA weights if any are provided
+    if lora_names and lora_values:
+        print("setting loras", lora_names, lora_values)
+        
+        # Set adapters
+        lora_utils.set_adapters(transformer, lora_names, lora_values)
     
     total_latent_sections = (total_second_length * 30) / (latent_window_size * 4)
     total_latent_sections = int(max(round(total_latent_sections), 1))
@@ -172,7 +298,6 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             Image.fromarray(input_image_np).save(os.path.join(outputs_folder, f'{job_id}.png'), pnginfo=metadata)
         
             #save in JSON too since gradio can't extract metadata from a PNG upload. Let's save some more stuff too.
-            import json
             metadata_dict = {
                 "prompt": prompt_text,
                 "seed": seed,
@@ -185,6 +310,12 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
                 "mp4_crf" : mp4_crf,
                 "timestamp": time.time()
             }
+            
+            # Add LoRA values to metadata if any
+            if lora_names and lora_values:
+                lora_data = dict(zip(lora_names, lora_values))
+                metadata_dict["lora_values"] = lora_data
+                
             with open(os.path.join(outputs_folder, f'{job_id}.json'), 'w') as f:
                 json.dump(metadata_dict, f, indent=2)
         else:
@@ -282,11 +413,21 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             if not high_vram:
                 unload_complete_models()
                 move_model_to_device_with_memory_preservation(transformer, target_device=gpu, preserved_memory_gb=gpu_memory_preservation)
+                
+                # Move all LoRA adapters to the GPU
+                if lora_names:
+                    move_lora_adapters_to_device(transformer, gpu)
 
             if use_teacache:
                 transformer.initialize_teacache(enable_teacache=True, num_steps=steps)
             else:
                 transformer.initialize_teacache(enable_teacache=False)
+
+            # Before sampling, ensure all LoRA adapters are on the correct device
+            if lora_names:
+                device = next(transformer.parameters()).device
+                print(f"Ensuring all LoRA adapters are on device {device}")
+                move_lora_adapters_to_device(transformer, device)
 
             def callback(d):
                 preview = d['denoised']
@@ -368,6 +509,10 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
             history_latents = torch.cat([generated_latents.to(history_latents), history_latents], dim=2)
 
             if not high_vram:
+                # Before offloading, move LoRA adapters to CPU if they exist
+                if lora_names:
+                    move_lora_adapters_to_device(transformer, cpu)
+                
                 offload_model_from_device_for_memory_preservation(transformer, target_device=gpu, preserved_memory_gb=8)
                 load_model_as_complete(vae, target_device=gpu)
 
@@ -411,7 +556,7 @@ def worker(input_image, prompt_text, n_prompt, seed, total_second_length, latent
 job_queue.set_worker_function(worker)
 
 
-def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata):
+def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata, *lora_values):
     assert input_image is not None, 'No input image!'
 
     # Create job parameters
@@ -432,6 +577,12 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
         'save_metadata': save_metadata
     }
     
+    # Add LoRA values if provided - extract them from the tuple
+    if lora_values:
+        # Convert tuple to list
+        lora_values_list = list(lora_values)
+        job_params['lora_values'] = lora_values_list
+    
     # Add job to queue
     job_id = job_queue.add_job(job_params)
     print(f"Added job {job_id} to queue")
@@ -439,6 +590,7 @@ def process(input_image, prompt_text, n_prompt, seed, total_second_length, laten
     queue_status = update_queue_status()
     # Return immediately after adding to queue
     return None, job_id, None, '', f'Job added to queue. Job ID: {job_id}', gr.update(interactive=True), gr.update(interactive=True)
+
 
 
 def end_process():
@@ -504,9 +656,6 @@ def monitor_job(job_id):
                 preview = job.progress_data.get('preview')
                 desc = job.progress_data.get('desc', '')
                 html = job.progress_data.get('html', '')
-
-                
-                #print(f"Preview data type: {type(preview)}, shape: {getattr(preview, 'shape', 'N/A')}")
                 
                 # Always keep preview visible and update its value
                 yield None, job_id, gr.update(visible=True, value=preview), desc, html, gr.update(interactive=True), gr.update(interactive=True)
@@ -516,7 +665,6 @@ def monitor_job(job_id):
                 yield None, job_id, gr.update(visible=True), '', 'Processing...', gr.update(interactive=True), gr.update(interactive=True)
         
         elif job.status == JobStatus.COMPLETED:
-
             # Don't hide preview on completion
             yield job.result, job_id, gr.update(visible=True), '', '', gr.update(interactive=True), gr.update(interactive=True)
             break
@@ -527,19 +675,20 @@ def monitor_job(job_id):
         
         elif job.status == JobStatus.CANCELLED:
             yield None, job_id, gr.update(visible=True), '', 'Job cancelled', gr.update(interactive=True), gr.update(interactive=True)
-
             break
         
         # Wait a bit before checking again
         time.sleep(0.5)
 
-# Create the interface using the updated version that supports auto-monitoring
 
+# Create the interface using the updated version that supports auto-monitoring
 interface = create_interface(
     process_fn=process,
     monitor_fn=monitor_job,
     end_process_fn=end_process,
-    update_queue_status_fn=update_queue_status
+    update_queue_status_fn=update_queue_status,
+    load_lora_file_fn=load_lora_file,
+    lora_names=lora_names
 )
 
 # Launch the interface
