@@ -14,3 +14,4 @@ torchvision
 einops
 opencv-contrib-python
 safetensors
+peft
