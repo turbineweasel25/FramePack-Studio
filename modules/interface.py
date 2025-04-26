@@ -77,7 +77,7 @@ def create_interface(
                                     label="Upload Metadata JSON (optional)",
                                     file_types=[".json"],
                                     type="filepath",
-                                    height=50,
+                                    height=100,
                                 )
                                 save_metadata = gr.Checkbox(label="Save Metadata", value=True, info="Store prompt/seed in output image metadata. Saves all generation params in a JSON file with the same name")   
                             with gr.Row():
