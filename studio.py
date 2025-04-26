@@ -1,4 +1,3 @@
-from diffusers_helper import lora_utils
 from diffusers_helper.hf_login import login
 
 import json
@@ -27,6 +26,7 @@ from diffusers_helper.gradio.progress_bar import make_progress_bar_html
 from transformers import SiglipImageProcessor, SiglipVisionModel
 from diffusers_helper.clip_vision import hf_clip_vision_encode
 from diffusers_helper.bucket_tools import find_nearest_bucket
+from diffusers_helper import lora_utils
 
 # Import from modules
 from modules.video_queue import VideoJobQueue, JobStatus
