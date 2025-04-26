@@ -75,6 +75,9 @@ Each timestamp defines when that prompt should start influencing the generation.
 ## Credits
 Many thanks to [Lvmin Zhang](https://github.com/lllyasviel) for the absolutely amazing work on the original [FramePack](https://github.com/lllyasviel/FramePack) code!
 
+Thanks to [Rickard Edén](https://github.com/neph1) for the LoRA code and their general contributions to this growing FramePack scene!
+
+
 
     @article{zhang2025framepack,
         title={Packing Input Frame Contexts in Next-Frame Prediction Models for Video Generation},
