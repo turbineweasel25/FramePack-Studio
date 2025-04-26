@@ -61,7 +61,7 @@ def create_interface(
                         input_image = gr.Image(
                             sources='upload',
                             type="numpy",
-                            label="Image",
+                            label="Image (optional)",
                             height=420,
                             elem_classes="contain-image"
                         )
@@ -71,7 +71,7 @@ def create_interface(
                         #example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
                         #example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
                         
-                        with gr.Accordion("Generation Parameters", open=False):
+                        with gr.Accordion("Generation Parameters", open=True):
                             with gr.Row():
                                 json_upload = gr.File(
                                     label="Upload Metadata JSON (optional)",
@@ -88,21 +88,22 @@ def create_interface(
                             with gr.Row():
                                 seed = gr.Number(label="Seed", value=31337, precision=0)
                                 randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
-
+                            with gr.Row("LoRA"):
+                                for lora in lora_names:
+                                    lora_values.append(gr.Slider(label=lora, minimum=0.0, maximum=2.0, value=1.0, step=0.01,))    
                             total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
-                            latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=True, info='Change at your own risk, very experimental')  # Should not change
                             steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1, info='Changing this value is not recommended.')
 
+
+                        with gr.Accordion("Advanced Parameters", open=False):    
+                            latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=True, info='Change at your own risk, very experimental')  # Should not change
                             cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=1.0, step=0.01, visible=False)  # Should not change
                             gs = gr.Slider(label="Distilled CFG Scale", minimum=1.0, maximum=32.0, value=10.0, step=0.01)
                             rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
                             mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=0, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
-
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
 
-                            with gr.Row():
-                                for lora in lora_names:
-                                    lora_values.append(gr.Slider(label=lora, minimum=0.0, maximum=2.0, value=1.0, step=0.01,))
+                           
 
 
 
