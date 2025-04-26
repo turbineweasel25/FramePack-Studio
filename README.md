@@ -9,6 +9,7 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
 - **Improved Prompt Adherence**: Better alignment between your text descriptions and the generated video
 - **Queue System**: Process multiple generation jobs without blocking the interface
 - **Metadata Saving/Import**: Prompt and seed are encoded into the output PNG, all other generation metadata is saved in a JSON file for easier importing
+- **Basic LoRA Support**: Works with most (all?) hunyuan LoRAs but the implementation is a bit rough around the edges
 
 ## Fresh Installation
 
@@ -54,6 +55,10 @@ Additional command line options:
 - `--server`: Specify the server address (default: 0.0.0.0)
 - `--port`: Specify a custom port
 - `--inbrowser`: Automatically open the interface in your browser
+
+## LoRAs
+
+Add LoRAs to the /loras/ folder at the root of the installation. Each LoRA in the folder will be loaded when Studio loads. Then you can set the weight of each LoRA for each generation job, LoRAs and their weights are saved with the other metadata in a job's JSON file. 
 
 ## Working with Timestamped Prompts
 
