@@ -65,9 +65,9 @@ Add LoRAs to the /loras/ folder at the root of the installation. Each LoRA in th
 You can create videos with changing prompts over time using the following syntax:
 
 ```
-[0s] A serene forest with sunlight filtering through the trees
-[5s] A deer appears in the clearing
-[10s] The deer drinks from a small stream
+[0s: A serene forest with sunlight filtering through the trees ]
+[5s: A deer appears in the clearing ]
+[10s: The deer drinks from a small stream ]
 ```
 
 Each timestamp defines when that prompt should start influencing the generation. The system will (hopefully) smoothly transition between prompts for a cohesive video.
