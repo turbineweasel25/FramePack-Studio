@@ -9,6 +9,7 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
 - **Basic LoRA Support**: Works with most (all?) hunyuan LoRAs but the implementation is a bit rough around the edges
 - **Queue System**: Process multiple generation jobs without blocking the interface
 - **Metadata Saving/Import**: Prompt and seed are encoded into the output PNG, all other generation metadata is saved in a JSON file
+- **I2V and T2V**: Works with or without an input image to allow for more flexibility when working with standard LoRAs
 
 
 ## Fresh Installation
