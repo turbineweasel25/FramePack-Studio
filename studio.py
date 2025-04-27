@@ -1,6 +1,7 @@
 from diffusers_helper import lora_utils
 from diffusers_helper.hf_login import login
 
+import asyncio
 import json
 import os
 import time
@@ -9,6 +10,9 @@ import traceback
 import einops
 import numpy as np
 import torch
+
+#Hacky fix for socket timeout in Windows
+asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 os.environ['HF_HOME'] = os.path.abspath(os.path.realpath(os.path.join(os.path.dirname(__file__), './hf_download')))
 
