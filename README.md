@@ -9,6 +9,7 @@ FramePack Studio is an enhanced version of the FramePack demo script, designed t
 - **Basic LoRA Support**: Works with most (all?) hunyuan LoRAs but the implementation is a bit rough around the edges
 - **Queue System**: Process multiple generation jobs without blocking the interface
 - **Metadata Saving/Import**: Prompt and seed are encoded into the output PNG, all other generation metadata is saved in a JSON file
+- **I2V and T2V**: Works with or without an input image to allow for more flexibility when working with standard LoRAs
 
 
 ## Fresh Installation
@@ -65,15 +66,18 @@ Add LoRAs to the /loras/ folder at the root of the installation. Each LoRA in th
 You can create videos with changing prompts over time using the following syntax:
 
 ```
-[0s] A serene forest with sunlight filtering through the trees
-[5s] A deer appears in the clearing
-[10s] The deer drinks from a small stream
+[0s: A serene forest with sunlight filtering through the trees ]
+[5s: A deer appears in the clearing ]
+[10s: The deer drinks from a small stream ]
 ```
 
 Each timestamp defines when that prompt should start influencing the generation. The system will (hopefully) smoothly transition between prompts for a cohesive video.
 
 ## Credits
 Many thanks to [Lvmin Zhang](https://github.com/lllyasviel) for the absolutely amazing work on the original [FramePack](https://github.com/lllyasviel/FramePack) code!
+
+Thanks to [Rickard Edén](https://github.com/neph1) for the LoRA code and their general contributions to this growing FramePack scene!
+
 
 
     @article{zhang2025framepack,

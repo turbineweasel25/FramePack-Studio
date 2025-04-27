@@ -1,4 +1,3 @@
-from diffusers_helper import lora_utils
 from diffusers_helper.hf_login import login
 
 import asyncio
@@ -31,6 +30,7 @@ from diffusers_helper.gradio.progress_bar import make_progress_bar_html
 from transformers import SiglipImageProcessor, SiglipVisionModel
 from diffusers_helper.clip_vision import hf_clip_vision_encode
 from diffusers_helper.bucket_tools import find_nearest_bucket
+from diffusers_helper import lora_utils
 
 # Import from modules
 from modules.video_queue import VideoJobQueue, JobStatus
@@ -561,8 +561,14 @@ job_queue.set_worker_function(worker)
 
 
 def process(input_image, prompt_text, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata, *lora_values):
-    assert input_image is not None, 'No input image!'
-
+    
+    # Create a blank black image if no input image is provided
+    if input_image is None:
+        # Create a default black image (640x640)
+        default_height, default_width = 640, 640
+        input_image = np.zeros((default_height, default_width, 3), dtype=np.uint8)
+        print("No input image provided. Using a blank black image.")
+    
     # Create job parameters
     job_params = {
         'input_image': input_image.copy(),  # Make a copy to avoid reference issues

@@ -61,7 +61,7 @@ def create_interface(
                         input_image = gr.Image(
                             sources='upload',
                             type="numpy",
-                            label="Image",
+                            label="Image (optional)",
                             height=420,
                             elem_classes="contain-image"
                         )
@@ -71,13 +71,13 @@ def create_interface(
                         #example_quick_prompts = gr.Dataset(samples=quick_prompts, label='Quick List', samples_per_page=1000, components=[prompt])
                         #example_quick_prompts.click(lambda x: x[0], inputs=[example_quick_prompts], outputs=prompt, show_progress=False, queue=False)
                         
-                        with gr.Accordion("Generation Parameters", open=False):
+                        with gr.Accordion("Generation Parameters", open=True):
                             with gr.Row():
                                 json_upload = gr.File(
                                     label="Upload Metadata JSON (optional)",
                                     file_types=[".json"],
                                     type="filepath",
-                                    height=150,
+                                    height=100,
                                 )
                                 save_metadata = gr.Checkbox(label="Save Metadata", value=True, info="Store prompt/seed in output image metadata. Saves all generation params in a JSON file with the same name")   
                             with gr.Row():
@@ -88,27 +88,20 @@ def create_interface(
                             with gr.Row():
                                 seed = gr.Number(label="Seed", value=31337, precision=0)
                                 randomize_seed = gr.Checkbox(label="Randomize", value=False, info="Generate a new random seed for each job")
-
+                            with gr.Row("LoRA"):
+                                for lora in lora_names:
+                                    lora_values.append(gr.Slider(label=lora, minimum=0.0, maximum=2.0, value=1.0, step=0.01,))    
                             total_second_length = gr.Slider(label="Total Video Length (Seconds)", minimum=1, maximum=120, value=5, step=0.1)
-                            latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=True, info='Change at your own risk, very experimental')  # Should not change
                             steps = gr.Slider(label="Steps", minimum=1, maximum=100, value=25, step=1, info='Changing this value is not recommended.')
 
+
+                        with gr.Accordion("Advanced Parameters", open=False):    
+                            latent_window_size = gr.Slider(label="Latent Window Size", minimum=1, maximum=33, value=9, step=1, visible=True, info='Change at your own risk, very experimental')  # Should not change
                             cfg = gr.Slider(label="CFG Scale", minimum=1.0, maximum=32.0, value=1.0, step=0.01, visible=False)  # Should not change
                             gs = gr.Slider(label="Distilled CFG Scale", minimum=1.0, maximum=32.0, value=10.0, step=0.01)
                             rs = gr.Slider(label="CFG Re-Scale", minimum=0.0, maximum=1.0, value=0.0, step=0.01, visible=False)  # Should not change
                             mp4_crf = gr.Slider(label="MP4 Compression", minimum=0, maximum=100, value=0, step=1, info="Lower means better quality. 0 is uncompressed. Change to 16 if you get black outputs. ")
-
                             gpu_memory_preservation = gr.Slider(label="GPU Inference Preserved Memory (GB) (larger means slower)", minimum=6, maximum=128, value=6, step=0.1, info="Set this number to a larger value if you encounter OOM. Larger value causes slower speed.")
-
-                            with gr.Row():
-                                for lora in lora_names:
-                                    lora_values.append(gr.Slider(label=lora, minimum=0.0, maximum=2.0, value=1.0, step=0.01,))
-
-
-
-
-
-                                
 
                         with gr.Row():
                             start_button = gr.Button(value="Add to Queue")
@@ -184,19 +177,6 @@ def create_interface(
             """Updates the timer value periodically to trigger queue refresh"""
             return int(time.time())
         
-        # Function to handle randomizing the seed if checkbox is checked
-        def process_with_random_seed(*args):
-            # Extract all arguments
-            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed_checked, save_metadata_checked, *lora_args = args
-            
-            # If randomize seed is checked, generate a new random seed
-            if randomize_seed_checked:
-                seed_value = random.randint(0, 2147483647)  # Max 32-bit integer
-                print(f"Randomized seed: {seed_value}")
-            
-            # Call the original process function with the potentially updated seed
-            return process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, save_metadata_checked, *lora_args)
-            
         # Connect the main process function
         ips = [input_image, prompt, n_prompt, seed, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed, save_metadata]
         
@@ -206,15 +186,37 @@ def create_interface(
         
         # Modified process function that updates the queue status after adding a job
         def process_with_queue_update(*args):
-            # Call the process function with random seed handling
-            result = process_with_random_seed(*args)
+            # Extract all arguments
+            input_image, prompt_text, n_prompt, seed_value, total_second_length, latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, use_teacache, mp4_crf, randomize_seed_checked, save_metadata_checked, *lora_args = args
+            
+            # Use the current seed value as is for this job
+            # Call the process function with all arguments
+            result = process_fn(input_image, prompt_text, n_prompt, seed_value, total_second_length, 
+                            latent_window_size, steps, cfg, gs, rs, gpu_memory_preservation, 
+                            use_teacache, mp4_crf, save_metadata_checked, *lora_args)
+            
+            # If randomize_seed is checked, generate a new random seed for the next job
+            new_seed_value = None
+            if randomize_seed_checked:
+                new_seed_value = random.randint(0, 2147483647)
+                print(f"Generated new seed for next job: {new_seed_value}")
             
             # If a job ID was created, automatically start monitoring it and update queue
             if result and result[1]:  # Check if job_id exists in results
                 job_id = result[1]
                 queue_status_data = update_queue_status_fn()
-                return [result[0], job_id, result[2], result[3], result[4], result[5], result[6], queue_status_data]
-            return result + [update_queue_status_fn()]
+                
+                # Add the new seed value to the results if randomize is checked
+                if new_seed_value is not None:
+                    return [result[0], job_id, result[2], result[3], result[4], result[5], result[6], queue_status_data, new_seed_value]
+                else:
+                    return [result[0], job_id, result[2], result[3], result[4], result[5], result[6], queue_status_data, gr.update()]
+            
+            # If no job ID was created, still return the new seed if randomize is checked
+            if new_seed_value is not None:
+                return result + [update_queue_status_fn(), new_seed_value]
+            else:
+                return result + [update_queue_status_fn(), gr.update()]
             
         # Custom end process function that ensures the queue is updated
         def end_process_with_update():
@@ -287,7 +289,7 @@ def create_interface(
         start_button.click(
             fn=process_with_queue_update, 
             inputs=ips, 
-            outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button, queue_status]
+            outputs=[result_video, current_job_id, preview_image, progress_desc, progress_bar, start_button, end_button, queue_status, seed]
         )
         
         # Connect the end button to cancel the current job and update the queue
@@ -308,13 +310,6 @@ def create_interface(
             fn=update_queue_status_fn,
             outputs=[queue_status]
         )
-        
-        # Connect LoRA file uploader
-        # lora_file.change(
-        #     fn=load_lora_file_fn, 
-        #     inputs=[lora_file],
-        #     outputs=[available_loras, lora_error]
-        # )
         
         # Connect LoRA upload in management tab
         lora_upload.change(
